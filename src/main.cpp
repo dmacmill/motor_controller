@@ -12,18 +12,30 @@
 #define ENCPULSEA2_PIN 35
 #define ENCPULSEB2_PIN 32
 
+static unsigned long lastControl = 0; // last control loop timestamp
+static unsigned long lastPrint = 0; 
+
 // PWM properties
 const int freq = 30000;
 const int pwmChannel = 0;
 const int resolution = 8;
-int dutyCycle = 160;
+int dutyCycle = 200;
+
+/*
+Duty cycles:
+160 => 0.13 m/s (estimate) => 0.133 m/s (actual)
+180 => 0.17 m/s (estimate) => 0.25 m/s (actual)
+200 => 0.11 m/s (estimate) => 0.33 m/s (actual)
+*/
 
 // Encoder state
 struct EncoderSnapshot {
-    volatile int count;
-    int prev_count;
-    volatile unsigned long time;
-    volatile unsigned long prev_time;
+    volatile int count = 0;
+    int prev_count = 0;
+
+    double position = 0;
+    double velocity = 0;
+    double omega = 0;
 };
 
 EncoderSnapshot m1;
@@ -32,15 +44,14 @@ EncoderSnapshot m2;
 // Wheel properties
 const double WHEEL_DIAMETER = 0.06;                             // meters
 const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
-volatile double distance_traveled_1 = 0.0;
-volatile double distance_traveled_2 = 0.0;
+const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
+double distance_traveled_1 = 0.0;
+double distance_traveled_2 = 0.0;
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void HandleEncoderInterrupt1()
 {
     digitalRead(ENCPULSEB1_PIN) == LOW ? ++m1.count : --m1.count;
-    m1.prev_time = m1.time;
-    m1.time = micros();
 }
 
 // rising edge of the phase A signal (pos/vel) of the 2 motor
@@ -48,8 +59,6 @@ void HandleEncoderInterrupt2()
 {
     // forwards = high because the motor is flipped around
     digitalRead(ENCPULSEB2_PIN) == HIGH ? ++m2.count : --m2.count;
-    m2.prev_time = m2.time;
-    m2.time = micros();
 }
 
 void setup()
@@ -73,16 +82,6 @@ void setup()
     // configue LEDC PWM
     ledcAttachChannel(ENABLE1_PIN, freq, resolution, pwmChannel);
     ledcAttachChannel(ENABLE2_PIN, freq, resolution, pwmChannel);
-
-    // Set initial values for motors
-    m1.count = 0;
-    m1.prev_count = 0;
-    m1.time = 0;
-    m1.prev_time = 0;
-    m2.count = 0;
-    m2.prev_count = 0;
-    m2.time = 0;
-    m2.prev_time = 0;
 
     // Begin at 115200 baud
     Serial.begin(115200);
@@ -119,61 +118,78 @@ void loop()
     ledcWrite(ENABLE1_PIN, dutyCycle);
     ledcWrite(ENABLE2_PIN, dutyCycle);
 
-    noInterrupts();
-    unsigned long duration1 = m1.time - m1.prev_time;
-    int m1_count = m1.count;
-    int pm1_count = m1.prev_count;
-
-    unsigned long duration2 = m2.time - m2.prev_time;
-    int m2_count = m2.count;
-    int pm2_count = m2.prev_count;
-    interrupts();
-
     bool moving = true;
-    if (m1_count != pm1_count) {
-        double rot1 = m1_count * 360.0 / (12 * 90); // 90 is encoder motor ratio. 12 is encoder motor ppr.
-        double prev_rot1 = pm1_count * 360.0 / (12 * 90);
 
-        // double distance_1 = (rot1 - prev_rot1) * (WHEEL_CIRCUMFRENCE / 360.0);
-        // use the counts and not the degrees for distance. 360 deg  = 1080 count
-        int delta = m1_count - pm1_count;
-        double distance_1 = delta * WHEEL_CIRCUMFRENCE / 1080;
+    // Get timestamps and state of motor encoders
+    unsigned int now = micros();
 
-        distance_traveled_1 += distance_1;
+    // Begin control loop, run every 10 ms
+    if (now - lastControl >= 10000) {
+        double dt = (now - lastControl) * 1e-6;
+        lastControl = now;
 
-        Serial.print("enable1: ");
-        Serial.print(std::fmod(rot1, 360.0));
-        Serial.print("°  \t");
-        Serial.print("count=");
-        Serial.print(m1_count);
-        Serial.print(" prev=");
-        Serial.print(pm1_count);
-        Serial.print(" delta=");
-        Serial.print(delta);
-        Serial.print("\t duration: ");
-        Serial.print(duration1);
-        Serial.print(" microsecs");
-        Serial.print("\t dist: ");
-        Serial.print(distance_1, 9);
-        Serial.print(" m\t so far: ");
-        Serial.print(distance_traveled_1, 4);
-        Serial.println("");
+        noInterrupts();
+        int m1_count = m1.count;
+        int m2_count = m2.count;
+        interrupts();
 
+        if (m1_count != m1.prev_count || m2_count != m2.prev_count) {
+            double rot1 = m1_count * 360.0 / (12 * 90); // 90 is encoder motor ratio. 12 is encoder motor ppr.
+            double prev_rot1 = m1.prev_count * 360.0 / (12 * 90);
+
+            // use the counts and not the degrees for distance. 360 deg  = 1080 count
+            int delta = m1_count - m1.prev_count;
+            double distance_1 = delta * METERS_PER_COUNT;
+            distance_traveled_1 += distance_1;
+            m1.position = distance_traveled_1; // unnecessary, but nice sanity check
+
+            // and the instantaneous velocity
+            // double lin_vel = distance_1 / (duration1 * 1e-6);
+            double lin_vel = distance_1 / dt;
+            m1.velocity = m1.velocity * 0.8
+                        + lin_vel     * 0.2;   // low-pass filter for random jolt avoidance
+
+            // and for the angular velocity (of this wheel instant)
+            // double omega = delta * (2 * PI / 1080) / (duration1 * 1e-6);
+            double omega = delta * (2 * PI / 1080) / dt;
+
+            Serial.print("enable1: ");
+            Serial.print(std::fmod(rot1, 360.0));
+            Serial.print("°  \t");
+            Serial.print("count=");
+            Serial.print(m1_count);
+            Serial.print(" delta=");
+            Serial.print(delta);
+            Serial.print(" dt: ");
+            Serial.print(dt, 6);
+            Serial.print(" secs");
+            Serial.print("\t lin_vel=");
+            Serial.print(lin_vel);
+            Serial.print(" velocity=");
+            Serial.print(m1.velocity);
+            Serial.print(" omega=");
+            Serial.print(omega);
+            Serial.print("\t so far: ");
+            Serial.print(distance_traveled_1, 4);
+            Serial.println("");
+
+
+            // m2
+            // float rot2 = m2_count * 360.0 / (12 * 90);
+            // float prev_rot2 = pm2_count * 360.0 / (12 * 90);
+
+            // double distance_2 = (rot2 - prev_rot2) * (WHEEL_CIRCUMFRENCE / 360.0);
+
+            // Serial.print("\t|| enable2: ");
+            // Serial.print(std::fmod(rot2, 360.0));
+            // Serial.print("°  \t");
+            // Serial.println(m2_count);
+
+            m1.prev_count = m1_count;    
+            m2.prev_count = m2_count;
+        }
     }
-    if (m2_count != pm2_count) {
-        float rot2 = m2_count * 360.0 / (12 * 90);
-        float prev_rot2 = pm2_count * 360.0 / (12 * 90);
 
-        double distance_2 = (rot2 - prev_rot2) * (WHEEL_CIRCUMFRENCE / 360.0);
-
-        // Serial.print("\t|| enable2: ");
-        // Serial.print(std::fmod(rot2, 360.0));
-        // Serial.print("°  \t");
-        // Serial.println(m2_count);
-    }
-
-    m1.prev_count = m1_count;    
-    m2.prev_count = m2_count;
 
     if (!moving) {
         motors_stop();
