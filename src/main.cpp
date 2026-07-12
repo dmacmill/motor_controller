@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "soc/gpio_struct.h"
 
 #define MOTOR1_PIN1 5
 #define MOTOR1_PIN2 17
@@ -12,8 +13,9 @@
 #define ENCPULSEA2_PIN 35
 #define ENCPULSEB2_PIN 32
 
-static unsigned long lastControl = 0; // last control loop timestamp
-static unsigned long lastPrint = 0; 
+static unsigned long lastControlRead = 0; // last motor control timestamp
+static unsigned long lastEncoderRead = 0; // last encoder read timestamp
+// static unsigned long lastPrint = 0;
 
 // PWM properties
 const int freq = 30000;
@@ -24,8 +26,8 @@ int dutyCycle = 200;
 /*
 Duty cycles:
 160 => 0.13 m/s (estimate) => 0.133 m/s (actual)
-180 => 0.17 m/s (estimate) => 0.25 m/s (actual)
-200 => 0.11 m/s (estimate) => 0.33 m/s (actual)
+180 => 0.25 m/s (estimate) => 0.25 m/s (actual)
+200 => 0.37 m/s (estimate) => 0.33 m/s (actual)
 */
 
 // Encoder state
@@ -49,13 +51,15 @@ double distance_traveled_1 = 0.0;
 double distance_traveled_2 = 0.0;
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
-void HandleEncoderInterrupt1()
+void IRAM_ATTR HandleEncoderInterrupt1()
 {
     digitalRead(ENCPULSEB1_PIN) == LOW ? ++m1.count : --m1.count;
+    // gpio_get_level((gpio_num_t)ENCPULSEB1_PIN) == LOW ? ++m1.count : --m1.count;
+    // (GPIO.in & (1UL << ENCPULSEB1_PIN)) == LOW ? ++m1.count : --m1.count;
 }
 
 // rising edge of the phase A signal (pos/vel) of the 2 motor
-void HandleEncoderInterrupt2()
+void IRAM_ATTR HandleEncoderInterrupt2()
 {
     // forwards = high because the motor is flipped around
     digitalRead(ENCPULSEB2_PIN) == HIGH ? ++m2.count : --m2.count;
@@ -115,18 +119,29 @@ void motors_stop()
 
 void loop()
 {
-    ledcWrite(ENABLE1_PIN, dutyCycle);
-    ledcWrite(ENABLE2_PIN, dutyCycle);
+    bool moving = true; // todo: move this somewhere else
+    unsigned long now = micros();
 
-    bool moving = true;
+    // Begin motor control loop, run every 20 ms (50 hz)
+    if (now - lastControlRead >= 20000) {
+        lastControlRead = now;
 
-    // Get timestamps and state of motor encoders
-    unsigned int now = micros();
+        if (!moving ) {
+            motors_stop();
+        }
+        else {
+            motors_forward();
+        }
+        ledcWrite(ENABLE1_PIN, dutyCycle);
+        ledcWrite(ENABLE2_PIN, dutyCycle);
+    }
 
-    // Begin control loop, run every 10 ms
-    if (now - lastControl >= 10000) {
-        double dt = (now - lastControl) * 1e-6;
-        lastControl = now;
+    now = micros();
+
+    // Begin encoder read loop, run every 10 ms (100 hz)
+    if (now - lastEncoderRead >= 10000) {
+        double dt = (now - lastEncoderRead) * 1e-6;
+        lastEncoderRead = now;
 
         noInterrupts();
         int m1_count = m1.count;
@@ -144,14 +159,12 @@ void loop()
             m1.position = distance_traveled_1; // unnecessary, but nice sanity check
 
             // and the instantaneous velocity
-            // double lin_vel = distance_1 / (duration1 * 1e-6);
             double lin_vel = distance_1 / dt;
             m1.velocity = m1.velocity * 0.8
                         + lin_vel     * 0.2;   // low-pass filter for random jolt avoidance
 
             // and for the angular velocity (of this wheel instant)
-            // double omega = delta * (2 * PI / 1080) / (duration1 * 1e-6);
-            double omega = delta * (2 * PI / 1080) / dt;
+            m1.omega = delta * (2 * PI / 1080) / dt;
 
             Serial.print("enable1: ");
             Serial.print(std::fmod(rot1, 360.0));
@@ -168,7 +181,7 @@ void loop()
             Serial.print(" velocity=");
             Serial.print(m1.velocity);
             Serial.print(" omega=");
-            Serial.print(omega);
+            Serial.print(m1.omega);
             Serial.print("\t so far: ");
             Serial.print(distance_traveled_1, 4);
             Serial.println("");
@@ -188,13 +201,5 @@ void loop()
             m1.prev_count = m1_count;    
             m2.prev_count = m2_count;
         }
-    }
-
-
-    if (!moving) {
-        motors_stop();
-    }
-    else {
-        motors_forward();
     }
 }
