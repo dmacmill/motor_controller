@@ -21,18 +21,21 @@ static unsigned long lastEncoderRead = 0; // last encoder read timestamp
 const int freq = 30000;
 const int pwmChannel = 0;
 const int resolution = 8;
-int dutyCycle = 200;
+static int dutyCycle = 0; // changed in controller loop
 
 /*
 Duty cycles:
+135 => 0.00 m/s (estimate)
 160 => 0.13 m/s (estimate) => 0.133 m/s (actual)
 180 => 0.25 m/s (estimate) => 0.25 m/s (actual)
 200 => 0.37 m/s (estimate) => 0.33 m/s (actual)
+244 => 0.60 m/s (estimate)
+255 => 0.66 m/s (estimate)
 */
 
 // Encoder state
 struct EncoderSnapshot {
-    volatile int count = 0;
+    volatile int count = 0; // todo: integer overflow/underflow, what do
     int prev_count = 0;
 
     double position = 0;
@@ -49,6 +52,12 @@ const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
 const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
 double distance_traveled_1 = 0.0;
 double distance_traveled_2 = 0.0;
+
+// Controller properties
+static double linearVelocity = 0.66;
+static double angularVelocity = 0;
+static double errprev1 = 0;
+static double errint1 = 0;
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void IRAM_ATTR HandleEncoderInterrupt1()
@@ -91,6 +100,23 @@ void setup()
     Serial.begin(115200);
     delay(2000);
     Serial.println("Testing DC Motor...");
+
+    // Enter the target velocities
+    // Serial.println("Enter the desired linear velocity (m/s): ");
+    // char buf[10];
+    // int end = Serial.readBytesUntil('\n', buf, 10);
+    // buf[end] = '\0';
+    // linearVelocity = atoi(buf);
+}
+
+double duty_cycle_to_vel(int duty_cycle) {
+    int d = duty_cycle > 255 ? 255 : duty_cycle;
+    return 0.0055*d - 0.74;
+}
+
+int vel_to_duty_cycle(double vel) {
+    int d = (int)std::round(181.818182*vel + 134.545454);
+    return d > 255 ? 255 : d;
 }
 
 void motors_forward()
@@ -117,6 +143,7 @@ void motors_stop()
     digitalWrite(MOTOR2_PIN2, LOW);
 }
 
+
 void loop()
 {
     bool moving = true; // todo: move this somewhere else
@@ -124,13 +151,41 @@ void loop()
 
     // Begin motor control loop, run every 20 ms (50 hz)
     if (now - lastControlRead >= 20000) {
+        double dt = (now - lastControlRead) * 1e-6;
         lastControlRead = now;
 
         if (!moving ) {
             motors_stop();
         }
         else {
+            // PID control algorithm to control a motor
+            double targetVelocity1 = 0.36;
+            // double targetVelocity1 = linearVelocity;
+            double err1 = targetVelocity1 - m1.velocity;
+
+            double kp = 1;
+            double kd = 0;
+            double ki = 0;
+
+            double dedt = (err1-errprev1)/dt;   // derivative
+            double errint1 = errint1 + err1*dt; // integral
+
+            double u = kp*err1  + kd*dedt + ki*errint1;
+
+            double newTargetVel = targetVelocity1 + u;
+            dutyCycle = vel_to_duty_cycle(newTargetVel);
             motors_forward();
+
+
+            Serial.print("Targeting ");
+            Serial.print(targetVelocity1);
+            Serial.print(" m/s at duty cycle ");
+            Serial.println(vel_to_duty_cycle(targetVelocity1));
+            Serial.print("\t u=");
+            Serial.print(u);
+            Serial.print(" newDutyCycle=");
+            Serial.print(dutyCycle);
+            Serial.println("");
         }
         ledcWrite(ENABLE1_PIN, dutyCycle);
         ledcWrite(ENABLE2_PIN, dutyCycle);
@@ -153,51 +208,55 @@ void loop()
             double prev_rot1 = m1.prev_count * 360.0 / (12 * 90);
 
             // use the counts and not the degrees for distance. 360 deg  = 1080 count
-            int delta = m1_count - m1.prev_count;
-            double distance_1 = delta * METERS_PER_COUNT;
-            distance_traveled_1 += distance_1;
-            m1.position = distance_traveled_1; // unnecessary, but nice sanity check
+            int delta1 = m1_count - m1.prev_count;
+            double distance_1 = delta1 * METERS_PER_COUNT;
+            m1.position += distance_traveled_1; // unnecessary, but nice sanity check
 
             // and the instantaneous velocity
-            double lin_vel = distance_1 / dt;
+            double lin_vel1 = distance_1 / dt;
             m1.velocity = m1.velocity * 0.8
-                        + lin_vel     * 0.2;   // low-pass filter for random jolt avoidance
+                        + lin_vel1    * 0.2;   // low-pass filter for random jolt avoidance
 
             // and for the angular velocity (of this wheel instant)
-            m1.omega = delta * (2 * PI / 1080) / dt;
+            m1.omega = delta1 * (2 * PI / 1080) / dt;
 
-            Serial.print("enable1: ");
-            Serial.print(std::fmod(rot1, 360.0));
-            Serial.print("°  \t");
+            // Serial.print("enable1: ");
+            // Serial.print(std::fmod(rot1, 360.0));
+            // Serial.print("°  \t");
             Serial.print("count=");
             Serial.print(m1_count);
             Serial.print(" delta=");
-            Serial.print(delta);
-            Serial.print(" dt: ");
-            Serial.print(dt, 6);
-            Serial.print(" secs");
+            Serial.print(delta1);
+            // Serial.print(" dt: ");
+            // Serial.print(dt, 6);
+            // Serial.print(" secs");
             Serial.print("\t lin_vel=");
-            Serial.print(lin_vel);
+            Serial.print(lin_vel1);
             Serial.print(" velocity=");
             Serial.print(m1.velocity);
             Serial.print(" omega=");
             Serial.print(m1.omega);
             Serial.print("\t so far: ");
-            Serial.print(distance_traveled_1, 4);
+            Serial.print(m1.position, 4);
             Serial.println("");
 
-
+            ///////////////////////////////////////////
             // m2
-            // float rot2 = m2_count * 360.0 / (12 * 90);
-            // float prev_rot2 = pm2_count * 360.0 / (12 * 90);
+            double rot2 = m2_count * 360.0 / (12 * 90);
+            double prev_rot2 = m1.prev_count * 360.0 / (12 * 90);
+            // position
+            int delta2 = m2_count - m2.prev_count;
+            double distance_2 = delta2 * METERS_PER_COUNT;
+            m2.position += distance_2;
+            // linear velocity
+            double lin_vel2 = distance_2 / dt;
+            m2.velocity = m2.velocity * 0.8 +
+                        + lin_vel2    * 0.2;
+            // angular velocity (sorta)
+            m2.omega = delta2 * (2 * PI / 1080) / dt;
 
-            // double distance_2 = (rot2 - prev_rot2) * (WHEEL_CIRCUMFRENCE / 360.0);
-
-            // Serial.print("\t|| enable2: ");
-            // Serial.print(std::fmod(rot2, 360.0));
-            // Serial.print("°  \t");
-            // Serial.println(m2_count);
-
+            ///////////////////////////////////////////
+            // reset prev counts
             m1.prev_count = m1_count;    
             m2.prev_count = m2_count;
         }
