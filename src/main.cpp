@@ -21,8 +21,7 @@ static unsigned long lastEncoderRead = 0; // last encoder read timestamp
 const int freq = 30000;
 const int pwmChannel = 0;
 const int resolution = 8;
-static int dutyCycle = 0; // changed in controller loop
-
+// static int dutyCycle = 0; // moved to control loop section
 /*
 Duty cycles:
 135 => 0.00 m/s (estimate)
@@ -54,10 +53,13 @@ double distance_traveled_1 = 0.0;
 double distance_traveled_2 = 0.0;
 
 // Controller properties
-static double linearVelocity = 0.66;
+static double linearVelocity = 0.36;
 static double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
+static double errprev2 = 0;
+static double errint2 = 0;
+
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void IRAM_ATTR HandleEncoderInterrupt1()
@@ -153,42 +155,73 @@ void loop()
     if (now - lastControlRead >= 20000) {
         double dt = (now - lastControlRead) * 1e-6;
         lastControlRead = now;
+        int dutyCycle1 = 0;
+        int dutyCycle2 = 0;
 
         if (!moving ) {
             motors_stop();
         }
         else {
-            // PID control algorithm to control a motor
-            double targetVelocity1 = 0.36;
-            // double targetVelocity1 = linearVelocity;
+            // PID control Motor 1
+            double targetVelocity1 = linearVelocity; // todo: todo: change this to use inv. kinematics 
             double err1 = targetVelocity1 - m1.velocity;
 
             double kp = 1;
             double kd = 0;
             double ki = 0;
 
-            double dedt = (err1-errprev1)/dt;   // derivative
-            double errint1 = errint1 + err1*dt; // integral
+            double dedt1 = (err1-errprev1)/dt;
+            errint1 += err1*dt;
 
-            double u = kp*err1  + kd*dedt + ki*errint1;
+            double u1 = kp*err1  + kd*dedt1 + ki*errint1;
 
-            double newTargetVel = targetVelocity1 + u;
-            dutyCycle = vel_to_duty_cycle(newTargetVel);
+            double newTargetVel1 = targetVelocity1 + u1;
+            dutyCycle1 = vel_to_duty_cycle(newTargetVel1);
+
+            // PID control Motor 2
+            double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
+            double err2 = targetVelocity2 - m2.velocity;
+
+            kp = 1;
+            kd = 0;
+            ki = 0;
+
+            double dedt2 = (err2-errprev2)/dt;
+            errint2 += err2*dt;
+
+            double u2 = kp*err2 + kd*dedt2 + ki*errint2;
+            
+            double newTargetVel2 = targetVelocity2 + u2;
+            dutyCycle2 = vel_to_duty_cycle(newTargetVel2);
+
             motors_forward();
 
 
-            Serial.print("Targeting ");
+            Serial.print("Target motor1= ");
             Serial.print(targetVelocity1);
-            Serial.print(" m/s at duty cycle ");
-            Serial.println(vel_to_duty_cycle(targetVelocity1));
-            Serial.print("\t u=");
-            Serial.print(u);
-            Serial.print(" newDutyCycle=");
-            Serial.print(dutyCycle);
+            Serial.print(" Actual motor1= ");
+            Serial.print(m1.velocity);
+            Serial.print(" ");
+            // Serial.print(vel_to_duty_cycle(targetVelocity1));
+            Serial.print(" | motor2= ");
+            Serial.print(targetVelocity2);
+            Serial.print(" Actual motor2= ");
+            Serial.print(m2.velocity);
+            Serial.print(" ");
+            // Serial.print(vel_to_duty_cycle(targetVelocity2));
+            Serial.println("");
+            Serial.print("\t u1=");
+            Serial.print(u1);
+            Serial.print(" dutyCycle1=");
+            Serial.print(dutyCycle1);
+            Serial.print(" u2=");
+            Serial.print(u2);
+            Serial.print(" dutyCycle2=");
+            Serial.print(dutyCycle2);
             Serial.println("");
         }
-        ledcWrite(ENABLE1_PIN, dutyCycle);
-        ledcWrite(ENABLE2_PIN, dutyCycle);
+        ledcWrite(ENABLE1_PIN, dutyCycle1);
+        ledcWrite(ENABLE2_PIN, dutyCycle2);
     }
 
     now = micros();
@@ -220,25 +253,25 @@ void loop()
             // and for the angular velocity (of this wheel instant)
             m1.omega = delta1 * (2 * PI / 1080) / dt;
 
-            // Serial.print("enable1: ");
-            // Serial.print(std::fmod(rot1, 360.0));
-            // Serial.print("°  \t");
-            Serial.print("count=");
-            Serial.print(m1_count);
-            Serial.print(" delta=");
-            Serial.print(delta1);
-            // Serial.print(" dt: ");
-            // Serial.print(dt, 6);
-            // Serial.print(" secs");
-            Serial.print("\t lin_vel=");
-            Serial.print(lin_vel1);
-            Serial.print(" velocity=");
-            Serial.print(m1.velocity);
-            Serial.print(" omega=");
-            Serial.print(m1.omega);
-            Serial.print("\t so far: ");
-            Serial.print(m1.position, 4);
-            Serial.println("");
+            // // Serial.print("enable1: ");
+            // // Serial.print(std::fmod(rot1, 360.0));
+            // // Serial.print("°  \t");
+            // Serial.print("count=");
+            // Serial.print(m1_count);
+            // Serial.print(" delta=");
+            // Serial.print(delta1);
+            // // Serial.print(" dt: ");
+            // // Serial.print(dt, 6);
+            // // Serial.print(" secs");
+            // Serial.print("\t lin_vel=");
+            // Serial.print(lin_vel1);
+            // Serial.print(" velocity=");
+            // Serial.print(m1.velocity);
+            // Serial.print(" omega=");
+            // Serial.print(m1.omega);
+            // Serial.print("\t so far: ");
+            // Serial.print(m1.position, 4);
+            // Serial.println("");
 
             ///////////////////////////////////////////
             // m2
