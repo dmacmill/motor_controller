@@ -23,7 +23,13 @@ const int pwmChannel = 0;
 const int resolution = 8;
 // static int dutyCycle = 0; // moved to control loop section
 /*
-Duty cycles:
+Duty cycles (m1):
+188 => 0.25 (est) => 0.23 (actual)
+195 => 0.30 (est) => 0.28 (actual)
+*/
+
+/*
+Duty cycles (m2):
 135 => 0.00 m/s (estimate)
 160 => 0.13 m/s (estimate) => 0.133 m/s (actual)
 180 => 0.25 m/s (estimate) => 0.25 m/s (actual)
@@ -53,7 +59,7 @@ double distance_traveled_1 = 0.0;
 double distance_traveled_2 = 0.0;
 
 // Controller properties
-static double linearVelocity = 0.36;
+static double linearVelocity = 0.25;
 static double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
@@ -111,13 +117,23 @@ void setup()
     // linearVelocity = atoi(buf);
 }
 
-double duty_cycle_to_vel(int duty_cycle) {
+double m1_duty_cycle_to_vel(int duty_cycle) {
+    int d = duty_cycle > 255 ? 255 : duty_cycle;
+    return 0.0071428571*d - 1.0928571345;
+}
+
+double m2_duty_cycle_to_vel(int duty_cycle) {
     int d = duty_cycle > 255 ? 255 : duty_cycle;
     return 0.0055*d - 0.74;
 }
 
-int vel_to_duty_cycle(double vel) {
+int m2_vel_to_duty_cycle(double vel) {
     int d = (int)std::round(181.818182*vel + 134.545454);
+    return d > 255 ? 255 : d;
+}
+
+int m1_vel_to_duty_cycle(double vel) {
+    int d = (int)std::round(140.0*vel + 153.0);
     return d > 255 ? 255 : d;
 }
 
@@ -162,13 +178,13 @@ void loop()
             motors_stop();
         }
         else {
-            // PID control Motor 1
-            double targetVelocity1 = linearVelocity; // todo: todo: change this to use inv. kinematics 
+            // PID control Motor 1 (left wheel)
+            double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
             double err1 = targetVelocity1 - m1.velocity;
 
-            double kp = 1;
-            double kd = 0;
-            double ki = 0;
+            double kp = 2;
+            double kd = 0.0;
+            double ki = 0.0;
 
             double dedt1 = (err1-errprev1)/dt;
             errint1 += err1*dt;
@@ -176,15 +192,15 @@ void loop()
             double u1 = kp*err1  + kd*dedt1 + ki*errint1;
 
             double newTargetVel1 = targetVelocity1 + u1;
-            dutyCycle1 = vel_to_duty_cycle(newTargetVel1);
+            dutyCycle1 = m1_vel_to_duty_cycle(newTargetVel1);
 
-            // PID control Motor 2
+            // PID control Motor 2 (right wheel)
             double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
             double err2 = targetVelocity2 - m2.velocity;
 
-            kp = 1;
-            kd = 0;
-            ki = 0;
+            kp = 2;
+            kd = 0.00;
+            ki = 0.0;
 
             double dedt2 = (err2-errprev2)/dt;
             errint2 += err2*dt;
@@ -192,32 +208,55 @@ void loop()
             double u2 = kp*err2 + kd*dedt2 + ki*errint2;
             
             double newTargetVel2 = targetVelocity2 + u2;
-            dutyCycle2 = vel_to_duty_cycle(newTargetVel2);
+            dutyCycle2 = m2_vel_to_duty_cycle(newTargetVel2);
 
             motors_forward();
 
+            // Serial.print("m1 target=");
+            // Serial.print(targetVelocity1);
+            // Serial.print("\tactual=");
+            // Serial.print(m1.velocity);
 
-            Serial.print("Target motor1= ");
+            // Serial.print("\tm2 target=");
+            // Serial.print(targetVelocity2);
+            // Serial.print("\tactual=");
+            // Serial.print(m2.velocity);
+
+            // Serial.print(" | u1=");
+            // Serial.print(u1);
+            // Serial.print("\tdutyCycle1=");
+            // Serial.print(dutyCycle1);            
+        
+            // Serial.print("\t u2=");
+            // Serial.print(u2);
+            // Serial.print("\tdutyCycle2=");
+            // Serial.print(dutyCycle2);
+            // Serial.println("");
+
+            // csv format for graphs
+            // target1,actual1,target2,actual2,u1,duty1,u2,duty2
+            
+            // m1/m2 vels
             Serial.print(targetVelocity1);
-            Serial.print(" Actual motor1= ");
+            Serial.print(",");
             Serial.print(m1.velocity);
-            Serial.print(" ");
-            // Serial.print(vel_to_duty_cycle(targetVelocity1));
-            Serial.print(" | motor2= ");
+            Serial.print(",");
+
             Serial.print(targetVelocity2);
-            Serial.print(" Actual motor2= ");
+            Serial.print(",");
             Serial.print(m2.velocity);
-            Serial.print(" ");
-            // Serial.print(vel_to_duty_cycle(targetVelocity2));
-            Serial.println("");
-            Serial.print("\t u1=");
+            Serial.print(",");
+
+            // m1/m2 u vals and duty cycles
             Serial.print(u1);
-            Serial.print(" dutyCycle1=");
-            Serial.print(dutyCycle1);
-            Serial.print(" u2=");
+            Serial.print(",");
+            Serial.print(dutyCycle1);            
+            Serial.print(",");
+        
             Serial.print(u2);
-            Serial.print(" dutyCycle2=");
+            Serial.print(",");
             Serial.print(dutyCycle2);
+            Serial.print(",");
             Serial.println("");
         }
         ledcWrite(ENABLE1_PIN, dutyCycle1);
