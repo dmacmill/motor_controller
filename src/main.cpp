@@ -1,17 +1,9 @@
 #include <Arduino.h>
 #include "soc/gpio_struct.h"
 
-#define MOTOR1_PIN1 5
-#define MOTOR1_PIN2 17
-#define ENABLE1_PIN 16
-#define ENCPULSEA1_PIN 19
-#define ENCPULSEB1_PIN 18
+#include "pins.hpp"
+#include "helpers.hpp"
 
-#define MOTOR2_PIN1 26
-#define MOTOR2_PIN2 27
-#define ENABLE2_PIN 14
-#define ENCPULSEA2_PIN 35
-#define ENCPULSEB2_PIN 32
 
 static unsigned long lastControlRead = 0; // last motor control timestamp
 static unsigned long lastEncoderRead = 0; // last encoder read timestamp
@@ -22,6 +14,7 @@ const int freq = 30000;
 const int pwmChannel = 0;
 const int resolution = 8;
 // static int dutyCycle = 0; // moved to control loop section
+
 /*
 Duty cycles (m1):
 188 => 0.25 (est) => 0.23 (actual)
@@ -55,11 +48,9 @@ EncoderSnapshot m2;
 const double WHEEL_DIAMETER = 0.06;                             // meters
 const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
 const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
-double distance_traveled_1 = 0.0;
-double distance_traveled_2 = 0.0;
 
 // Controller properties
-static double linearVelocity = 0.25;
+static double linearVelocity = 0.10;
 static double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
@@ -117,51 +108,6 @@ void setup()
     // linearVelocity = atoi(buf);
 }
 
-double m1_duty_cycle_to_vel(int duty_cycle) {
-    int d = duty_cycle > 255 ? 255 : duty_cycle;
-    return 0.0071428571*d - 1.0928571345;
-}
-
-double m2_duty_cycle_to_vel(int duty_cycle) {
-    int d = duty_cycle > 255 ? 255 : duty_cycle;
-    return 0.0055*d - 0.74;
-}
-
-int m2_vel_to_duty_cycle(double vel) {
-    int d = (int)std::round(181.818182*vel + 134.545454);
-    return d > 255 ? 255 : d;
-}
-
-int m1_vel_to_duty_cycle(double vel) {
-    int d = (int)std::round(140.0*vel + 153.0);
-    return d > 255 ? 255 : d;
-}
-
-void motors_forward()
-{
-    digitalWrite(MOTOR1_PIN1, LOW);
-    digitalWrite(MOTOR1_PIN2, HIGH);
-    digitalWrite(MOTOR2_PIN1, HIGH);
-    digitalWrite(MOTOR2_PIN2, LOW);
-}
-
-void motors_backward()
-{
-    digitalWrite(MOTOR1_PIN1, HIGH);
-    digitalWrite(MOTOR1_PIN2, LOW);
-    digitalWrite(MOTOR2_PIN1, LOW);
-    digitalWrite(MOTOR2_PIN2, HIGH);
-}
-
-void motors_stop()
-{
-    digitalWrite(MOTOR1_PIN1, LOW);
-    digitalWrite(MOTOR1_PIN2, LOW);
-    digitalWrite(MOTOR2_PIN1, LOW);
-    digitalWrite(MOTOR2_PIN2, LOW);
-}
-
-
 void loop()
 {
     bool moving = true; // todo: move this somewhere else
@@ -182,35 +128,44 @@ void loop()
             double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
             double err1 = targetVelocity1 - m1.velocity;
 
-            double kp = 2;
-            double kd = 0.0;
-            double ki = 0.0;
+            double kp_1 = 1.0;
+            double kd_1 = 0.0;
+            double ki_1 = 0.002;
 
             double dedt1 = (err1-errprev1)/dt;
             errint1 += err1*dt;
 
-            double u1 = kp*err1  + kd*dedt1 + ki*errint1;
+            double u1 = kp_1*err1  + kd_1*dedt1 + ki_1*errint1;
 
             double newTargetVel1 = targetVelocity1 + u1;
             dutyCycle1 = m1_vel_to_duty_cycle(newTargetVel1);
+
+            if (newTargetVel1 > 0.0)
+                m1_forward();
+            else
+                m1_backward();
 
             // PID control Motor 2 (right wheel)
             double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
             double err2 = targetVelocity2 - m2.velocity;
 
-            kp = 2;
-            kd = 0.00;
-            ki = 0.0;
+            double kp_2 = 1.0;
+            double kd_2 = 0.0;
+            double ki_2 = -0.001;
 
             double dedt2 = (err2-errprev2)/dt;
             errint2 += err2*dt;
 
-            double u2 = kp*err2 + kd*dedt2 + ki*errint2;
+            double u2 = kp_2*err2 + kd_2*dedt2 + ki_2*errint2;
             
             double newTargetVel2 = targetVelocity2 + u2;
             dutyCycle2 = m2_vel_to_duty_cycle(newTargetVel2);
 
-            motors_forward();
+            if (newTargetVel2 > 0.0)
+                m2_forward();
+            else
+                m2_backward();
+
 
             // Serial.print("m1 target=");
             // Serial.print(targetVelocity1);
@@ -282,7 +237,7 @@ void loop()
             // use the counts and not the degrees for distance. 360 deg  = 1080 count
             int delta1 = m1_count - m1.prev_count;
             double distance_1 = delta1 * METERS_PER_COUNT;
-            m1.position += distance_traveled_1; // unnecessary, but nice sanity check
+            m1.position += distance_1; // unnecessary, but nice sanity check
 
             // and the instantaneous velocity
             double lin_vel1 = distance_1 / dt;
