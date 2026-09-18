@@ -7,30 +7,44 @@
 
 /// dutyCycles <-> velocity converters
 
-double m1_duty_cycle_to_vel(int duty_cycle) {
-    int d = duty_cycle > 255 ? 255 : duty_cycle;
-    return 0.0071428571*d - 1.0928571345;
-}
+/*worked for the old L298N*/
+// 
+// double m1_duty_cycle_to_vel(int duty_cycle) {
+//     int d = duty_cycle > 255 ? 255 : duty_cycle;
+//     return 0.0071428571*d - 1.0928571345;
+// }
 
-double m2_duty_cycle_to_vel(int duty_cycle) {
-    int d = duty_cycle > 255 ? 255 : duty_cycle;
-    return 0.0055*d - 0.74;
-}
+// double m2_duty_cycle_to_vel(int duty_cycle) {
+//     int d = duty_cycle > 255 ? 255 : duty_cycle;
+//     return 0.0055*d - 0.74;
+// }
 
-// Used in control code
+// // Used in control code (worked for the old L298N)
+// int m1_vel_to_duty_cycle(double vel) {
+//     vel = abs(vel);
+//     int d = (int)std::round(140.0*vel + 153.0);
+//     return d > 255 ? 255 : d;
+// }
+
+// int m2_vel_to_duty_cycle(double vel) {
+//     vel = abs(vel);
+//     int d = (int)std::round(181.818182*vel + 134.545454);
+//     return d > 255 ? 255 : d;
+//}
+
+
+/*below works for TB6612FNG*/
 int m1_vel_to_duty_cycle(double vel) {
     vel = abs(vel);
-    int d = (int)std::round(140.0*vel + 153.0);
+    int d = (int)std::round(160*vel + 124);
     return d > 255 ? 255 : d;
 }
 
 int m2_vel_to_duty_cycle(double vel) {
     vel = abs(vel);
-    int d = (int)std::round(181.818182*vel + 134.545454);
+    int d = (int)std::round(230*vel + 91);
     return d > 255 ? 255 : d;
 }
-
-
 
 /// motor helpers
 

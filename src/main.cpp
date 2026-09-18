@@ -17,18 +17,15 @@ const int resolution = 8;
 
 /*
 Duty cycles (m1):
-188 => 0.25 (est) => 0.23 (actual)
-195 => 0.30 (est) => 0.28 (actual)
+156 => 0.20 (est) => 0.38 (actual)
+172 => 0.30 (est) => 0.45 (actual)
 */
 
 /*
 Duty cycles (m2):
-135 => 0.00 m/s (estimate)
-160 => 0.13 m/s (estimate) => 0.133 m/s (actual)
-180 => 0.25 m/s (estimate) => 0.25 m/s (actual)
-200 => 0.37 m/s (estimate) => 0.33 m/s (actual)
-244 => 0.60 m/s (estimate)
-255 => 0.66 m/s (estimate)
+
+137 => 0.20 m/s (estimate) => 0.20 m/s (actual)
+160 => 0.30 m/s (estimate) => 0.46 m/s (actual)
 */
 
 // Encoder state
@@ -50,7 +47,7 @@ const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
 const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
 
 // Controller properties
-static double linearVelocity = 0.10;
+static double linearVelocity = 0.30;
 static double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
@@ -130,7 +127,8 @@ void loop()
 
             double kp_1 = 1.0;
             double kd_1 = 0.0;
-            double ki_1 = 0.002;
+            double ki_1 = 0.000;
+            // double ki_1 = 0.0;
 
             double dedt1 = (err1-errprev1)/dt;
             errint1 += err1*dt;
@@ -151,7 +149,7 @@ void loop()
 
             double kp_2 = 1.0;
             double kd_2 = 0.0;
-            double ki_2 = -0.001;
+            double ki_2 = -0.000;
 
             double dedt2 = (err2-errprev2)/dt;
             errint2 += err2*dt;
