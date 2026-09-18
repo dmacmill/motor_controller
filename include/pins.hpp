@@ -11,3 +11,5 @@
 #define ENABLE2_PIN 14
 #define ENCPULSEA2_PIN 35
 #define ENCPULSEB2_PIN 32
+
+#define BTN_PIN 36

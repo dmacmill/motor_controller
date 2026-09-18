@@ -17,15 +17,28 @@ const int resolution = 8;
 
 /*
 Duty cycles (m1):
-156 => 0.20 (est) => 0.38 (actual)
-172 => 0.30 (est) => 0.45 (actual)
+15  => -0.09 or 0.02 probs 0
+20  => 0.023
+50  => 0.111
+60  => 0.14
+80  => 0.205
+100 => 0.265
+120 => 
+
+
 */
 
 /*
-Duty cycles (m2):
+Duty cycles (m2):0
+15  => 0.0
+20  => 0.021
+50  => 0.110
+60  => 0.14
+80  => 0.201
+100 => 0.265
+120 => 
 
-137 => 0.20 m/s (estimate) => 0.20 m/s (actual)
-160 => 0.30 m/s (estimate) => 0.46 m/s (actual)
+
 */
 
 // Encoder state
@@ -47,13 +60,16 @@ const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
 const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
 
 // Controller properties
-static double linearVelocity = 0.30;
+static double linearVelocity = 0.40;
 static double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
 static double errprev2 = 0;
 static double errint2 = 0;
 
+volatile int TEMP_target_dutycycle = 100;
+volatile bool pressed = false;
+volatile unsigned long lastTimeBtnPressed = 0;
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void IRAM_ATTR HandleEncoderInterrupt1()
@@ -70,6 +86,20 @@ void IRAM_ATTR HandleEncoderInterrupt2()
     digitalRead(ENCPULSEB2_PIN) == HIGH ? ++m2.count : --m2.count;
 }
 
+void IRAM_ATTR HandleBtnInterrupt() 
+{
+    unsigned long now = millis();
+    if (now - lastTimeBtnPressed > 100) {
+        Serial.println("pushed button!!!");
+        if (TEMP_target_dutycycle > 0)
+            TEMP_target_dutycycle -= 5;
+        else
+            TEMP_target_dutycycle = 100;
+        pressed = true;
+    }
+    lastTimeBtnPressed = now;
+}
+
 void setup()
 {
     pinMode(MOTOR1_PIN1, OUTPUT);
@@ -83,10 +113,13 @@ void setup()
     pinMode(ENABLE2_PIN, OUTPUT);
     pinMode(ENCPULSEB1_PIN, INPUT_PULLUP);
     pinMode(ENCPULSEB2_PIN, INPUT_PULLUP);
+    pinMode(BTN_PIN, INPUT_PULLUP);
 
     // Attach intterupts to pullup resistor pins
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA1_PIN), HandleEncoderInterrupt1, RISING);
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA2_PIN), HandleEncoderInterrupt2, RISING);
+    attachInterrupt(digitalPinToInterrupt(BTN_PIN), HandleBtnInterrupt, RISING); // debug button
+
 
     // configue LEDC PWM
     ledcAttachChannel(ENABLE1_PIN, freq, resolution, pwmChannel);
@@ -120,6 +153,40 @@ void loop()
         if (!moving ) {
             motors_stop();
         }
+        else { // NO PID
+            // m1
+            dutyCycle1 = TEMP_target_dutycycle;
+            m1_forward();
+
+            // m2
+            dutyCycle2 = TEMP_target_dutycycle;
+            m2_forward();
+            
+
+            // m1/m2 vels
+            Serial.print(m1.velocity);
+            Serial.print(",");
+
+            Serial.print(m2.velocity);
+            Serial.print(",");
+
+            // m1/m2 u vals and
+            Serial.print(dutyCycle1);            
+            Serial.print(",");
+        
+            Serial.print(dutyCycle2);
+            Serial.print(", ");
+
+            // m1/m2 estimates
+            Serial.print(m1_vel_to_duty_cycle(m1.velocity));
+            Serial.print(",");
+            Serial.print(m2_vel_to_duty_cycle(m2.velocity));
+            Serial.print(",");
+
+            Serial.println("");
+
+        }
+        /*
         else {
             // PID control Motor 1 (left wheel)
             double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
@@ -212,6 +279,7 @@ void loop()
             Serial.print(",");
             Serial.println("");
         }
+        */
         ledcWrite(ENABLE1_PIN, dutyCycle1);
         ledcWrite(ENABLE2_PIN, dutyCycle2);
     }
@@ -285,5 +353,7 @@ void loop()
             m1.prev_count = m1_count;    
             m2.prev_count = m2_count;
         }
+
+        pressed = false;
     }
 }

@@ -36,13 +36,13 @@
 /*below works for TB6612FNG*/
 int m1_vel_to_duty_cycle(double vel) {
     vel = abs(vel);
-    int d = (int)std::round(160*vel + 124);
+    int d = (int)std::round(327.869*vel + 12.787);
     return d > 255 ? 255 : d;
 }
 
 int m2_vel_to_duty_cycle(double vel) {
     vel = abs(vel);
-    int d = (int)std::round(230*vel + 91);
+    int d = (int)std::round(312.5*vel + 17.187);
     return d > 255 ? 255 : d;
 }
 
