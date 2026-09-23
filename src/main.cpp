@@ -114,12 +114,15 @@ void setup()
     pinMode(ENCPULSEB1_PIN, INPUT_PULLUP);
     pinMode(ENCPULSEB2_PIN, INPUT_PULLUP);
     pinMode(BTN_PIN, INPUT_PULLUP);
+    pinMode(POTEN_PIN, INPUT);
 
     // Attach intterupts to pullup resistor pins
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA1_PIN), HandleEncoderInterrupt1, RISING);
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA2_PIN), HandleEncoderInterrupt2, RISING);
     attachInterrupt(digitalPinToInterrupt(BTN_PIN), HandleBtnInterrupt, RISING); // debug button
 
+    // configure debug potentiometer
+    analogSetAttenuation(ADC_11db); // 3.3V debug potentiometer
 
     // configue LEDC PWM
     ledcAttachChannel(ENABLE1_PIN, freq, resolution, pwmChannel);
@@ -154,8 +157,13 @@ void loop()
             motors_stop();
         }
         else { // NO PID
+            double potenPin = (analogRead(POTEN_PIN) + analogRead(POTEN_PIN) + analogRead(POTEN_PIN)) / 3.0;
+            // double potenPin = analogRead(POTEN_PIN);
+
             // m1
-            dutyCycle1 = TEMP_target_dutycycle;
+            // dutyCycle1 = TEMP_target_dutycycle;
+            // dutyCycle1 = (int)doubleMap(potenPin, 0, 4096, 0, 100); // todo: these are normally noisy, but we should figure something out
+            dutyCycle1 = (int)doubleMap(potenPin, 0, 4096, 0, 100);
             m1_forward();
 
             // m2
@@ -171,6 +179,8 @@ void loop()
             Serial.print(",");
 
             // m1/m2 u vals and
+            Serial.print(potenPin);
+            Serial.print(",");
             Serial.print(dutyCycle1);            
             Serial.print(",");
         
@@ -185,6 +195,9 @@ void loop()
 
             Serial.println("");
 
+
+            ledcWrite(ENABLE1_PIN, dutyCycle1);
+            ledcWrite(ENABLE2_PIN, dutyCycle2);
         }
         /*
         else {
@@ -278,10 +291,12 @@ void loop()
             Serial.print(dutyCycle2);
             Serial.print(",");
             Serial.println("");
+
+
+            ledcWrite(ENABLE1_PIN, dutyCycle1);
+            ledcWrite(ENABLE2_PIN, dutyCycle2);
         }
         */
-        ledcWrite(ENABLE1_PIN, dutyCycle1);
-        ledcWrite(ENABLE2_PIN, dutyCycle2);
     }
 
     now = micros();

@@ -9,7 +9,9 @@
 #define MOTOR2_PIN1 26
 #define MOTOR2_PIN2 27
 #define ENABLE2_PIN 14
-#define ENCPULSEA2_PIN 35
-#define ENCPULSEB2_PIN 32
+#define ENCPULSEA2_PIN 4
+#define ENCPULSEB2_PIN 0
+
 
 #define BTN_PIN 36
+#define POTEN_PIN 39
