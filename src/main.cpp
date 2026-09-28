@@ -60,7 +60,7 @@ const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
 const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
 
 // Controller properties
-static double linearVelocity = 0.40;
+static double linearVelocity = 0.10;
 static double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
@@ -156,50 +156,6 @@ void loop()
         if (!moving ) {
             motors_stop();
         }
-        else { // NO PID
-            double potenPin = (analogRead(POTEN_PIN) + analogRead(POTEN_PIN) + analogRead(POTEN_PIN)) / 3.0;
-            // double potenPin = analogRead(POTEN_PIN);
-
-            // m1
-            // dutyCycle1 = TEMP_target_dutycycle;
-            // dutyCycle1 = (int)doubleMap(potenPin, 0, 4096, 0, 100); // todo: these are normally noisy, but we should figure something out
-            dutyCycle1 = (int)doubleMap(potenPin, 0, 4096, 0, 100);
-            m1_forward();
-
-            // m2
-            dutyCycle2 = TEMP_target_dutycycle;
-            m2_forward();
-            
-
-            // m1/m2 vels
-            Serial.print(m1.velocity);
-            Serial.print(",");
-
-            Serial.print(m2.velocity);
-            Serial.print(",");
-
-            // m1/m2 u vals and
-            Serial.print(potenPin);
-            Serial.print(",");
-            Serial.print(dutyCycle1);            
-            Serial.print(",");
-        
-            Serial.print(dutyCycle2);
-            Serial.print(", ");
-
-            // m1/m2 estimates
-            Serial.print(m1_vel_to_duty_cycle(m1.velocity));
-            Serial.print(",");
-            Serial.print(m2_vel_to_duty_cycle(m2.velocity));
-            Serial.print(",");
-
-            Serial.println("");
-
-
-            ledcWrite(ENABLE1_PIN, dutyCycle1);
-            ledcWrite(ENABLE2_PIN, dutyCycle2);
-        }
-        /*
         else {
             // PID control Motor 1 (left wheel)
             double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
@@ -245,27 +201,6 @@ void loop()
                 m2_backward();
 
 
-            // Serial.print("m1 target=");
-            // Serial.print(targetVelocity1);
-            // Serial.print("\tactual=");
-            // Serial.print(m1.velocity);
-
-            // Serial.print("\tm2 target=");
-            // Serial.print(targetVelocity2);
-            // Serial.print("\tactual=");
-            // Serial.print(m2.velocity);
-
-            // Serial.print(" | u1=");
-            // Serial.print(u1);
-            // Serial.print("\tdutyCycle1=");
-            // Serial.print(dutyCycle1);            
-        
-            // Serial.print("\t u2=");
-            // Serial.print(u2);
-            // Serial.print("\tdutyCycle2=");
-            // Serial.print(dutyCycle2);
-            // Serial.println("");
-
             // csv format for graphs
             // target1,actual1,target2,actual2,u1,duty1,u2,duty2
             
@@ -291,15 +226,16 @@ void loop()
             Serial.print(dutyCycle2);
             Serial.print(",");
             Serial.println("");
-
-
-            ledcWrite(ENABLE1_PIN, dutyCycle1);
-            ledcWrite(ENABLE2_PIN, dutyCycle2);
         }
-        */
+        
+        
+        ledcWrite(ENABLE1_PIN, dutyCycle1);
+        ledcWrite(ENABLE2_PIN, dutyCycle2);
     }
 
     now = micros();
+    
+    ///////////////////////////////////////////////////////
 
     // Begin encoder read loop, run every 10 ms (100 hz)
     if (now - lastEncoderRead >= 10000) {
