@@ -152,80 +152,114 @@ void loop()
         lastControlRead = now;
         int dutyCycle1 = 0;
         int dutyCycle2 = 0;
+        bool pid = false;
 
+        
         if (!moving ) {
             motors_stop();
         }
-        else {
-            // PID control Motor 1 (left wheel)
-            double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
-            double err1 = targetVelocity1 - m1.velocity;
+        else{
+            if (pid) {
+                // PID control Motor 1 (left wheel)
+                double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
+                double err1 = targetVelocity1 - m1.velocity;
 
-            double kp_1 = 1.0;
-            double kd_1 = 0.0;
-            double ki_1 = 0.000;
-            // double ki_1 = 0.0;
+                double kp_1 = 1.0;
+                double kd_1 = 0.0;
+                double ki_1 = 0.000;
+                // double ki_1 = 0.0;
 
-            double dedt1 = (err1-errprev1)/dt;
-            errint1 += err1*dt;
+                double dedt1 = (err1-errprev1)/dt;
+                errint1 += err1*dt;
 
-            double u1 = kp_1*err1  + kd_1*dedt1 + ki_1*errint1;
+                double u1 = kp_1*err1  + kd_1*dedt1 + ki_1*errint1;
 
-            double newTargetVel1 = targetVelocity1 + u1;
-            dutyCycle1 = m1_vel_to_duty_cycle(newTargetVel1);
+                double newTargetVel1 = targetVelocity1 + u1;
+                dutyCycle1 = m1_vel_to_duty_cycle(newTargetVel1);
 
-            if (newTargetVel1 > 0.0)
-                m1_forward();
-            else
-                m1_backward();
+                if (newTargetVel1 > 0.0)
+                    m1_forward();
+                else
+                    m1_backward();
 
-            // PID control Motor 2 (right wheel)
-            double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
-            double err2 = targetVelocity2 - m2.velocity;
+                // PID control Motor 2 (right wheel)
+                double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
+                double err2 = targetVelocity2 - m2.velocity;
 
-            double kp_2 = 1.0;
-            double kd_2 = 0.0;
-            double ki_2 = -0.000;
+                double kp_2 = 1.0;
+                double kd_2 = 0.0;
+                double ki_2 = -0.000;
 
-            double dedt2 = (err2-errprev2)/dt;
-            errint2 += err2*dt;
+                double dedt2 = (err2-errprev2)/dt;
+                errint2 += err2*dt;
 
-            double u2 = kp_2*err2 + kd_2*dedt2 + ki_2*errint2;
+                double u2 = kp_2*err2 + kd_2*dedt2 + ki_2*errint2;
+                
+                double newTargetVel2 = targetVelocity2 + u2;
+                dutyCycle2 = m2_vel_to_duty_cycle(newTargetVel2);
+
+                if (newTargetVel2 > 0.0)
+                    m2_forward();
+                else
+                    m2_backward();
+
+
+                // csv format for graphs
+                // target1,actual1,target2,actual2,u1,duty1,u2,duty2
+                
+                // m1/m2 vels
+                Serial.print("pid: ");
+                Serial.print(targetVelocity1);
+                Serial.print(",");
+                Serial.print(m1.velocity);
+                Serial.print(",");
+
+                Serial.print(targetVelocity2);
+                Serial.print(",");
+                Serial.print(m2.velocity);
+                Serial.print(",");
+
+                // m1/m2 u vals and duty cycles
+                Serial.print(u1);
+                Serial.print(",");
+                Serial.print(dutyCycle1);            
+                Serial.print(",");
             
-            double newTargetVel2 = targetVelocity2 + u2;
-            dutyCycle2 = m2_vel_to_duty_cycle(newTargetVel2);
+                Serial.print(u2);
+                Serial.print(",");
+                Serial.print(dutyCycle2);
+                Serial.print(",");
+                Serial.println("");
+            }
+            else {
+                dutyCycle1 = m1_vel_to_duty_cycle(linearVelocity);
+                if (linearVelocity > 0.0)
+                    m1_forward();
+                else
+                    m1_backward();
 
-            if (newTargetVel2 > 0.0)
-                m2_forward();
-            else
-                m2_backward();
+                dutyCycle2 = m2_vel_to_duty_cycle(linearVelocity);
+                if (linearVelocity > 0.0)
+                    m2_forward();
+                else
+                    m2_backward();
 
+                Serial.print("nopid: ");
+                Serial.print(linearVelocity);
+                Serial.print(",");
+                Serial.print(m1.velocity);
+                Serial.print(",");
+                Serial.print(dutyCycle1);
+                Serial.print(",");
 
-            // csv format for graphs
-            // target1,actual1,target2,actual2,u1,duty1,u2,duty2
-            
-            // m1/m2 vels
-            Serial.print(targetVelocity1);
-            Serial.print(",");
-            Serial.print(m1.velocity);
-            Serial.print(",");
-
-            Serial.print(targetVelocity2);
-            Serial.print(",");
-            Serial.print(m2.velocity);
-            Serial.print(",");
-
-            // m1/m2 u vals and duty cycles
-            Serial.print(u1);
-            Serial.print(",");
-            Serial.print(dutyCycle1);            
-            Serial.print(",");
-        
-            Serial.print(u2);
-            Serial.print(",");
-            Serial.print(dutyCycle2);
-            Serial.print(",");
-            Serial.println("");
+                Serial.print(linearVelocity);
+                Serial.print(",");
+                Serial.print(m2.velocity);
+                Serial.print(",");
+                Serial.print(dutyCycle2);
+                Serial.print(",");
+                Serial.println();
+            }
         }
         
         
