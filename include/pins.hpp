@@ -1,13 +1,17 @@
 #pragma once
 
-#define MOTOR1_PIN1 5
-#define MOTOR1_PIN2 17
-#define ENABLE1_PIN 16
-#define ENCPULSEA1_PIN 19
-#define ENCPULSEB1_PIN 18
+#define MOTOR1_PIN1 19
+#define MOTOR1_PIN2 18
+#define ENABLE1_PIN 5
+#define ENCPULSEA1_PIN 17
+#define ENCPULSEB1_PIN 16
 
-#define MOTOR2_PIN1 26
+#define MOTOR2_PIN1 14
 #define MOTOR2_PIN2 27
-#define ENABLE2_PIN 14
-#define ENCPULSEA2_PIN 35
-#define ENCPULSEB2_PIN 32
+#define ENABLE2_PIN 26
+#define ENCPULSEA2_PIN 32
+#define ENCPULSEB2_PIN 33
+
+
+#define BTN_PIN 35
+#define POTEN_PIN 39

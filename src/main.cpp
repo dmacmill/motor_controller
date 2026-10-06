@@ -17,18 +17,28 @@ const int resolution = 8;
 
 /*
 Duty cycles (m1):
-188 => 0.25 (est) => 0.23 (actual)
-195 => 0.30 (est) => 0.28 (actual)
+15  => -0.09 or 0.02 probs 0
+20  => 0.023
+50  => 0.111
+60  => 0.14
+80  => 0.205
+100 => 0.265
+120 => 
+
+
 */
 
 /*
-Duty cycles (m2):
-135 => 0.00 m/s (estimate)
-160 => 0.13 m/s (estimate) => 0.133 m/s (actual)
-180 => 0.25 m/s (estimate) => 0.25 m/s (actual)
-200 => 0.37 m/s (estimate) => 0.33 m/s (actual)
-244 => 0.60 m/s (estimate)
-255 => 0.66 m/s (estimate)
+Duty cycles (m2):0
+15  => 0.0
+20  => 0.021
+50  => 0.110
+60  => 0.14
+80  => 0.201
+100 => 0.265
+120 => 
+
+
 */
 
 // Encoder state
@@ -57,6 +67,10 @@ static double errint1 = 0;
 static double errprev2 = 0;
 static double errint2 = 0;
 
+// Interrupt values
+volatile bool moving = true;
+volatile bool pressed = false;
+volatile unsigned long lastTimeBtnPressed = 0;
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void IRAM_ATTR HandleEncoderInterrupt1()
@@ -73,6 +87,17 @@ void IRAM_ATTR HandleEncoderInterrupt2()
     digitalRead(ENCPULSEB2_PIN) == HIGH ? ++m2.count : --m2.count;
 }
 
+void IRAM_ATTR HandleBtnInterrupt() 
+{
+    unsigned long now = millis();
+    if (now - lastTimeBtnPressed > 100) {
+        Serial.println("pushed button!!!");
+        moving = !moving;
+        pressed = true;
+    }
+    lastTimeBtnPressed = now;
+}
+
 void setup()
 {
     pinMode(MOTOR1_PIN1, OUTPUT);
@@ -86,10 +111,16 @@ void setup()
     pinMode(ENABLE2_PIN, OUTPUT);
     pinMode(ENCPULSEB1_PIN, INPUT_PULLUP);
     pinMode(ENCPULSEB2_PIN, INPUT_PULLUP);
+    pinMode(BTN_PIN, INPUT_PULLUP);
+    pinMode(POTEN_PIN, INPUT);
 
     // Attach intterupts to pullup resistor pins
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA1_PIN), HandleEncoderInterrupt1, RISING);
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA2_PIN), HandleEncoderInterrupt2, RISING);
+    attachInterrupt(digitalPinToInterrupt(BTN_PIN), HandleBtnInterrupt, RISING); // debug button
+
+    // configure debug potentiometer
+    analogSetAttenuation(ADC_11db); // 3.3V debug potentiometer
 
     // configue LEDC PWM
     ledcAttachChannel(ENABLE1_PIN, freq, resolution, pwmChannel);
@@ -110,7 +141,6 @@ void setup()
 
 void loop()
 {
-    bool moving = true; // todo: move this somewhere else
     unsigned long now = micros();
 
     // Begin motor control loop, run every 20 ms (50 hz)
@@ -119,106 +149,123 @@ void loop()
         lastControlRead = now;
         int dutyCycle1 = 0;
         int dutyCycle2 = 0;
+        bool pid = true;
 
+        
         if (!moving ) {
             motors_stop();
         }
-        else {
-            // PID control Motor 1 (left wheel)
-            double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
-            double err1 = targetVelocity1 - m1.velocity;
+        else{
+            if (pid) {
+                // PID control Motor 1 (left wheel)
+                double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
+                double err1 = targetVelocity1 - m1.velocity;
 
-            double kp_1 = 1.0;
-            double kd_1 = 0.0;
-            double ki_1 = 0.002;
+                double kp_1 = 1000.0;
+                double ki_1 = 100.0;
+                double kd_1 = 10.0;
 
-            double dedt1 = (err1-errprev1)/dt;
-            errint1 += err1*dt;
+                double dedt1 = (err1-errprev1)/dt;
+                errint1 += err1*dt;
 
-            double u1 = kp_1*err1  + kd_1*dedt1 + ki_1*errint1;
+                double u1 = kp_1*err1  + ki_1*errint1 + kd_1*dedt1;
 
-            double newTargetVel1 = targetVelocity1 + u1;
-            dutyCycle1 = m1_vel_to_duty_cycle(newTargetVel1);
+                // double newTargetVel1 = targetVelocity1 + u1;
+                dutyCycle1 = (int)constrain(u1, 0, 255);
 
-            if (newTargetVel1 > 0.0)
-                m1_forward();
-            else
-                m1_backward();
+                if (targetVelocity1 > 0.0)
+                    m1_forward();
+                else
+                    m1_backward();
 
-            // PID control Motor 2 (right wheel)
-            double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
-            double err2 = targetVelocity2 - m2.velocity;
+                // PID control Motor 2 (right wheel)
+                double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
+                double err2 = targetVelocity2 - m2.velocity;
 
-            double kp_2 = 1.0;
-            double kd_2 = 0.0;
-            double ki_2 = -0.001;
+                double kp_2 = 1000.0;
+                double ki_2 = 100.0;
+                double kd_2 = 10.0;
 
-            double dedt2 = (err2-errprev2)/dt;
-            errint2 += err2*dt;
+                double dedt2 = (err2-errprev2)/dt;
+                errint2 += err2*dt;
 
-            double u2 = kp_2*err2 + kd_2*dedt2 + ki_2*errint2;
+                double u2 = kp_2*err2 + ki_2*errint2 + kd_2*dedt2;
+                
+                //double newTargetVel2 = targetVelocity2 + u2;
+                dutyCycle2 = (int)constrain(u2, 0, 255);
+
+                if (targetVelocity2 > 0.0)
+                    m2_forward();
+                else
+                    m2_backward();
+
+
+                // csv format for graphs
+                // target1,actual1,target2,actual2,u1,duty1,u2,duty2
+                
+                // m1/m2 vels
+                Serial.print("pid: ");
+                Serial.print(targetVelocity1);
+                Serial.print(",");
+                Serial.print(m1.velocity);
+                Serial.print(",");
+
+                Serial.print(targetVelocity2);
+                Serial.print(",");
+                Serial.print(m2.velocity);
+                Serial.print(",");
+
+                // m1/m2 u vals and duty cycles
+                Serial.print(u1);
+                Serial.print(",");
+                Serial.print(dutyCycle1);            
+                Serial.print(",");
             
-            double newTargetVel2 = targetVelocity2 + u2;
-            dutyCycle2 = m2_vel_to_duty_cycle(newTargetVel2);
+                Serial.print(u2);
+                Serial.print(",");
+                Serial.print(dutyCycle2);
+                Serial.print(",");
+                Serial.println("");
+            }
+            else {
+                dutyCycle1 = m1_vel_to_duty_cycle(linearVelocity);
+                if (linearVelocity > 0.0)
+                    m1_forward();
+                else
+                    m1_backward();
 
-            if (newTargetVel2 > 0.0)
-                m2_forward();
-            else
-                m2_backward();
+                dutyCycle2 = m2_vel_to_duty_cycle(linearVelocity);
+                if (linearVelocity > 0.0)
+                    m2_forward();
+                else
+                    m2_backward();
 
+                Serial.print("nopid: ");
+                Serial.print(linearVelocity);
+                Serial.print(",");
+                Serial.print(m1.velocity);
+                Serial.print(",");
+                Serial.print(dutyCycle1);
+                Serial.print(",");
 
-            // Serial.print("m1 target=");
-            // Serial.print(targetVelocity1);
-            // Serial.print("\tactual=");
-            // Serial.print(m1.velocity);
-
-            // Serial.print("\tm2 target=");
-            // Serial.print(targetVelocity2);
-            // Serial.print("\tactual=");
-            // Serial.print(m2.velocity);
-
-            // Serial.print(" | u1=");
-            // Serial.print(u1);
-            // Serial.print("\tdutyCycle1=");
-            // Serial.print(dutyCycle1);            
-        
-            // Serial.print("\t u2=");
-            // Serial.print(u2);
-            // Serial.print("\tdutyCycle2=");
-            // Serial.print(dutyCycle2);
-            // Serial.println("");
-
-            // csv format for graphs
-            // target1,actual1,target2,actual2,u1,duty1,u2,duty2
-            
-            // m1/m2 vels
-            Serial.print(targetVelocity1);
-            Serial.print(",");
-            Serial.print(m1.velocity);
-            Serial.print(",");
-
-            Serial.print(targetVelocity2);
-            Serial.print(",");
-            Serial.print(m2.velocity);
-            Serial.print(",");
-
-            // m1/m2 u vals and duty cycles
-            Serial.print(u1);
-            Serial.print(",");
-            Serial.print(dutyCycle1);            
-            Serial.print(",");
-        
-            Serial.print(u2);
-            Serial.print(",");
-            Serial.print(dutyCycle2);
-            Serial.print(",");
-            Serial.println("");
+                Serial.print(linearVelocity);
+                Serial.print(",");
+                Serial.print(m2.velocity);
+                Serial.print(",");
+                Serial.print(dutyCycle2);
+                Serial.print(",");
+                Serial.println();
+            }
         }
+        
+        
         ledcWrite(ENABLE1_PIN, dutyCycle1);
         ledcWrite(ENABLE2_PIN, dutyCycle2);
     }
 
     now = micros();
+    
+    ///////////////////////////////////////////////////////
 
     // Begin encoder read loop, run every 10 ms (100 hz)
     if (now - lastEncoderRead >= 10000) {
@@ -287,5 +334,7 @@ void loop()
             m1.prev_count = m1_count;    
             m2.prev_count = m2_count;
         }
+
+        pressed = false;
     }
 }

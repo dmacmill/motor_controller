@@ -5,32 +5,11 @@
 
 #include "pins.hpp"
 
-/// dutyCycles <-> velocity converters
 
-double m1_duty_cycle_to_vel(int duty_cycle) {
-    int d = duty_cycle > 255 ? 255 : duty_cycle;
-    return 0.0071428571*d - 1.0928571345;
+/// potentiometer mapping
+double doubleMap(double x, double in_min, double in_max, double out_min, double out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
-
-double m2_duty_cycle_to_vel(int duty_cycle) {
-    int d = duty_cycle > 255 ? 255 : duty_cycle;
-    return 0.0055*d - 0.74;
-}
-
-// Used in control code
-int m1_vel_to_duty_cycle(double vel) {
-    vel = abs(vel);
-    int d = (int)std::round(140.0*vel + 153.0);
-    return d > 255 ? 255 : d;
-}
-
-int m2_vel_to_duty_cycle(double vel) {
-    vel = abs(vel);
-    int d = (int)std::round(181.818182*vel + 134.545454);
-    return d > 255 ? 255 : d;
-}
-
-
 
 /// motor helpers
 
