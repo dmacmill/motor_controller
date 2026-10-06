@@ -67,7 +67,8 @@ static double errint1 = 0;
 static double errprev2 = 0;
 static double errint2 = 0;
 
-volatile int TEMP_target_dutycycle = 100;
+// Interrupt values
+volatile bool moving = true;
 volatile bool pressed = false;
 volatile unsigned long lastTimeBtnPressed = 0;
 
@@ -91,10 +92,7 @@ void IRAM_ATTR HandleBtnInterrupt()
     unsigned long now = millis();
     if (now - lastTimeBtnPressed > 100) {
         Serial.println("pushed button!!!");
-        if (TEMP_target_dutycycle > 0)
-            TEMP_target_dutycycle -= 5;
-        else
-            TEMP_target_dutycycle = 100;
+        moving = !moving;
         pressed = true;
     }
     lastTimeBtnPressed = now;
@@ -143,7 +141,6 @@ void setup()
 
 void loop()
 {
-    bool moving = true; // todo: move this somewhere else
     unsigned long now = micros();
 
     // Begin motor control loop, run every 20 ms (50 hz)
@@ -152,7 +149,7 @@ void loop()
         lastControlRead = now;
         int dutyCycle1 = 0;
         int dutyCycle2 = 0;
-        bool pid = false;
+        bool pid = true;
 
         
         if (!moving ) {
@@ -164,20 +161,19 @@ void loop()
                 double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
                 double err1 = targetVelocity1 - m1.velocity;
 
-                double kp_1 = 1.0;
-                double kd_1 = 0.0;
-                double ki_1 = 0.000;
-                // double ki_1 = 0.0;
+                double kp_1 = 1000.0;
+                double ki_1 = 100.0;
+                double kd_1 = 10.0;
 
                 double dedt1 = (err1-errprev1)/dt;
                 errint1 += err1*dt;
 
-                double u1 = kp_1*err1  + kd_1*dedt1 + ki_1*errint1;
+                double u1 = kp_1*err1  + ki_1*errint1 + kd_1*dedt1;
 
-                double newTargetVel1 = targetVelocity1 + u1;
-                dutyCycle1 = m1_vel_to_duty_cycle(newTargetVel1);
+                // double newTargetVel1 = targetVelocity1 + u1;
+                dutyCycle1 = (int)constrain(u1, 0, 255);
 
-                if (newTargetVel1 > 0.0)
+                if (targetVelocity1 > 0.0)
                     m1_forward();
                 else
                     m1_backward();
@@ -186,19 +182,19 @@ void loop()
                 double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
                 double err2 = targetVelocity2 - m2.velocity;
 
-                double kp_2 = 1.0;
-                double kd_2 = 0.0;
-                double ki_2 = -0.000;
+                double kp_2 = 1000.0;
+                double ki_2 = 100.0;
+                double kd_2 = 10.0;
 
                 double dedt2 = (err2-errprev2)/dt;
                 errint2 += err2*dt;
 
-                double u2 = kp_2*err2 + kd_2*dedt2 + ki_2*errint2;
+                double u2 = kp_2*err2 + ki_2*errint2 + kd_2*dedt2;
                 
-                double newTargetVel2 = targetVelocity2 + u2;
-                dutyCycle2 = m2_vel_to_duty_cycle(newTargetVel2);
+                //double newTargetVel2 = targetVelocity2 + u2;
+                dutyCycle2 = (int)constrain(u2, 0, 255);
 
-                if (newTargetVel2 > 0.0)
+                if (targetVelocity2 > 0.0)
                     m2_forward();
                 else
                     m2_backward();
