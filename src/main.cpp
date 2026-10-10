@@ -161,8 +161,8 @@ void loop()
                 double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
                 double err1 = targetVelocity1 - m1.velocity;
 
-                double kp_1 = 1000.0;
-                double ki_1 = 100.0;
+                double kp_1 = 300.0;
+                double ki_1 = 150.0; // todo: p is ok, but try higher i
                 double kd_1 = 10.0;
 
                 double dedt1 = (err1-errprev1)/dt;
@@ -182,8 +182,8 @@ void loop()
                 double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
                 double err2 = targetVelocity2 - m2.velocity;
 
-                double kp_2 = 1000.0;
-                double ki_2 = 100.0;
+                double kp_2 = 300.0;
+                double ki_2 = 150.0;
                 double kd_2 = 10.0;
 
                 double dedt2 = (err2-errprev2)/dt;
@@ -228,13 +228,13 @@ void loop()
                 Serial.println("");
             }
             else {
-                dutyCycle1 = m1_vel_to_duty_cycle(linearVelocity);
+                dutyCycle1 = 100; //m1_vel_to_duty_cycle(linearVelocity);
                 if (linearVelocity > 0.0)
                     m1_forward();
                 else
                     m1_backward();
 
-                dutyCycle2 = m2_vel_to_duty_cycle(linearVelocity);
+                dutyCycle2 = 100; //m2_vel_to_duty_cycle(linearVelocity);
                 if (linearVelocity > 0.0)
                     m2_forward();
                 else
