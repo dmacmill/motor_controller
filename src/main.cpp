@@ -1,4 +1,13 @@
 #include <Arduino.h>
+#include <micro_ros_platformio.h>
+
+#include <rcl/rcl.h>
+#include <rclc/rclc.h>
+#include <rclc/executor.h>
+
+#include <geometry_msgs/msg/twist.h>
+// #include <nav_msgs/msg/odometry.h> for publishing later
+
 #include "soc/gpio_struct.h"
 
 #include "pins.hpp"
@@ -15,31 +24,6 @@ const int pwmChannel = 0;
 const int resolution = 8;
 // static int dutyCycle = 0; // moved to control loop section
 
-/*
-Duty cycles (m1):
-15  => -0.09 or 0.02 probs 0
-20  => 0.023
-50  => 0.111
-60  => 0.14
-80  => 0.205
-100 => 0.265
-120 => 
-
-
-*/
-
-/*
-Duty cycles (m2):0
-15  => 0.0
-20  => 0.021
-50  => 0.110
-60  => 0.14
-80  => 0.201
-100 => 0.265
-120 => 
-
-
-*/
 
 // Encoder state
 struct EncoderSnapshot {
@@ -60,8 +44,8 @@ const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
 const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
 
 // Controller properties
-static double linearVelocity = 0.10;
-static double angularVelocity = 0;
+static volatile double linearVelocity = 0.0;
+static volatile double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
 static double errprev2 = 0;
@@ -71,6 +55,48 @@ static double errint2 = 0;
 volatile bool moving = true;
 volatile bool pressed = false;
 volatile unsigned long lastTimeBtnPressed = 0;
+
+
+// micro_ros things
+#if !defined(MICRO_ROS_TRANSPORT_ARDUINO_SERIAL)
+#error This microcontroller is only avaliable for Arduino framework with serial transport.
+#endif
+
+// Error handle loop
+void error_loop() {
+  while(1) {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); // blink led when ros connect fails
+    delay(100);
+  }
+}
+
+// ROS 2 Entities
+struct RosEntities {
+    rcl_subscription_t cmd_vel_subcription;
+    geometry_msgs__msg__Twist cmd_vel_msg;
+
+    rclc_executor_t executor;
+    rclc_support_t support;
+    rcl_allocator_t allocator;
+    rcl_node_t cmd_vel_node;
+    rcl_timer_t timer;
+
+    // todo: move outside: it couples too many things
+    static void cmd_vel_callback(const void * msgin) {
+        if (msgin == nullptr) return;
+
+        const auto * twist_msg = static_cast<const geometry_msgs__msg__Twist *>(msgin);
+        linearVelocity = twist_msg->linear.x;
+        angularVelocity = twist_msg->angular.z;
+        // digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    }
+};
+
+RosEntities ros_entities;
+
+#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){error_loop();}}
+#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){}}
+
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void IRAM_ATTR HandleEncoderInterrupt1()
@@ -91,7 +117,7 @@ void IRAM_ATTR HandleBtnInterrupt()
 {
     unsigned long now = millis();
     if (now - lastTimeBtnPressed > 100) {
-        Serial.println("pushed button!!!");
+        // Serial.println("pushed button!!!");
         moving = !moving;
         pressed = true;
     }
@@ -113,6 +139,7 @@ void setup()
     pinMode(ENCPULSEB2_PIN, INPUT_PULLUP);
     pinMode(BTN_PIN, INPUT_PULLUP);
     pinMode(POTEN_PIN, INPUT);
+    pinMode(LED_BUILTIN, OUTPUT);
 
     // Attach intterupts to pullup resistor pins
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA1_PIN), HandleEncoderInterrupt1, RISING);
@@ -126,17 +153,50 @@ void setup()
     ledcAttachChannel(ENABLE1_PIN, freq, resolution, pwmChannel);
     ledcAttachChannel(ENABLE2_PIN, freq, resolution, pwmChannel);
 
-    // Begin at 115200 baud
-    Serial.begin(115200);
-    delay(2000);
-    Serial.println("Testing DC Motor...");
 
-    // Enter the target velocities
-    // Serial.println("Enter the desired linear velocity (m/s): ");
-    // char buf[10];
-    // int end = Serial.readBytesUntil('\n', buf, 10);
-    // buf[end] = '\0';
-    // linearVelocity = atoi(buf);
+    // Using Serial as our way to publish ROS2 messages
+    Serial.begin(115200);
+
+
+    {
+        // ROS2
+        set_microros_serial_transports(Serial);
+        delay(2000);
+
+        ros_entities.allocator = rcl_get_default_allocator();
+
+        // create init options
+        RCCHECK(rclc_support_init(&(ros_entities.support), 0, NULL, &(ros_entities.allocator)));
+
+        // initialize executor
+        ros_entities.executor = rclc_executor_get_zero_initialized_executor();
+        RCCHECK(rclc_executor_init(
+            &(ros_entities.executor),
+            &(ros_entities.support.context),
+            1, // number of things we can subscribe to
+            &(ros_entities.allocator)
+        ));
+
+        // create node
+        RCCHECK(rclc_node_init_default( &(ros_entities.cmd_vel_node), 
+            "micro_ros_platformio_node", 
+            "",
+            &(ros_entities.support)));
+
+        // create subscriber
+        RCCHECK(rclc_subscription_init_default(&(ros_entities.cmd_vel_subcription), 
+            &(ros_entities.cmd_vel_node), 
+            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+            "/cmd_vel"));
+        RCCHECK(rclc_executor_add_subscription(
+            &(ros_entities.executor),
+            &(ros_entities.cmd_vel_subcription),
+            &(ros_entities.cmd_vel_msg), 
+            &RosEntities::cmd_vel_callback,
+            ON_NEW_DATA
+        ));
+    }
+    // Serial.println("Testing DC Motor...");
 }
 
 void loop()
@@ -151,6 +211,7 @@ void loop()
         int dutyCycle2 = 0;
         bool pid = true;
 
+        rclc_executor_spin_some(&(ros_entities.executor), 500); // call the cmd_vel callbacks
         
         if (!moving ) {
             motors_stop();
@@ -204,28 +265,28 @@ void loop()
                 // target1,actual1,target2,actual2,u1,duty1,u2,duty2
                 
                 // m1/m2 vels
-                Serial.print("pid: ");
-                Serial.print(targetVelocity1);
-                Serial.print(",");
-                Serial.print(m1.velocity);
-                Serial.print(",");
+                // Serial.print("pid: ");
+                // Serial.print(targetVelocity1);
+                // Serial.print(",");
+                // Serial.print(m1.velocity);
+                // Serial.print(",");
 
-                Serial.print(targetVelocity2);
-                Serial.print(",");
-                Serial.print(m2.velocity);
-                Serial.print(",");
+                // Serial.print(targetVelocity2);
+                // Serial.print(",");
+                // Serial.print(m2.velocity);
+                // Serial.print(",");
 
-                // m1/m2 u vals and duty cycles
-                Serial.print(u1);
-                Serial.print(",");
-                Serial.print(dutyCycle1);            
-                Serial.print(",");
+                // // m1/m2 u vals and duty cycles
+                // Serial.print(u1);
+                // Serial.print(",");
+                // Serial.print(dutyCycle1);            
+                // Serial.print(",");
             
-                Serial.print(u2);
-                Serial.print(",");
-                Serial.print(dutyCycle2);
-                Serial.print(",");
-                Serial.println("");
+                // Serial.print(u2);
+                // Serial.print(",");
+                // Serial.print(dutyCycle2);
+                // Serial.print(",");
+                // Serial.println("");
             }
             else {
                 dutyCycle1 = 100; //m1_vel_to_duty_cycle(linearVelocity);
@@ -240,21 +301,21 @@ void loop()
                 else
                     m2_backward();
 
-                Serial.print("nopid: ");
-                Serial.print(linearVelocity);
-                Serial.print(",");
-                Serial.print(m1.velocity);
-                Serial.print(",");
-                Serial.print(dutyCycle1);
-                Serial.print(",");
+                // Serial.print("nopid: ");
+                // Serial.print(linearVelocity);
+                // Serial.print(",");
+                // Serial.print(m1.velocity);
+                // Serial.print(",");
+                // Serial.print(dutyCycle1);
+                // Serial.print(",");
 
-                Serial.print(linearVelocity);
-                Serial.print(",");
-                Serial.print(m2.velocity);
-                Serial.print(",");
-                Serial.print(dutyCycle2);
-                Serial.print(",");
-                Serial.println();
+                // Serial.print(linearVelocity);
+                // Serial.print(",");
+                // Serial.print(m2.velocity);
+                // Serial.print(",");
+                // Serial.print(dutyCycle2);
+                // Serial.print(",");
+                // Serial.println();
             }
         }
         
