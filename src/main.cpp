@@ -1,19 +1,12 @@
 #include <Arduino.h>
-#include <micro_ros_platformio.h>
-
-#include <rcl/rcl.h>
-#include <rclc/rclc.h>
-#include <rclc/executor.h>
-
-#include <geometry_msgs/msg/twist.h>
-// #include <nav_msgs/msg/odometry.h> for publishing later
 
 #include "soc/gpio_struct.h"
 
 #include "pins.hpp"
 #include "helpers.hpp"
+#include "ros_entities.hpp"
 
-
+static unsigned long lastAgentRead   = 0; // last microros agent check timestamp
 static unsigned long lastControlRead = 0; // last motor control timestamp
 static unsigned long lastEncoderRead = 0; // last encoder read timestamp
 // static unsigned long lastPrint = 0;
@@ -57,45 +50,38 @@ volatile bool pressed = false;
 volatile unsigned long lastTimeBtnPressed = 0;
 
 
-// micro_ros things
-#if !defined(MICRO_ROS_TRANSPORT_ARDUINO_SERIAL)
-#error This microcontroller is only avaliable for Arduino framework with serial transport.
-#endif
+// Since callbacks have no this pointer, we do this thing
 
-// Error handle loop
-void error_loop() {
-  while(1) {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); // blink led when ros connect fails
-    delay(100);
-  }
+RosEntities * ros_entities = nullptr;
+
+void cmd_vel_callback(const void * msgin) {
+    if (msgin == nullptr) return;
+
+    const auto * twist_msg = static_cast<const geometry_msgs__msg__Twist *>(msgin);
+    linearVelocity = twist_msg->linear.x;
+    angularVelocity = twist_msg->angular.z;
+    // digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 }
+void diagnostics_callback(rcl_timer_t * timer, int64_t last_call_time) {
+    (void)timer;
+    (void)last_call_time;
 
-// ROS 2 Entities
-struct RosEntities {
-    rcl_subscription_t cmd_vel_subcription;
-    geometry_msgs__msg__Twist cmd_vel_msg;
-
-    rclc_executor_t executor;
-    rclc_support_t support;
-    rcl_allocator_t allocator;
-    rcl_node_t cmd_vel_node;
-    rcl_timer_t timer;
-
-    // todo: move outside: it couples too many things
-    static void cmd_vel_callback(const void * msgin) {
-        if (msgin == nullptr) return;
-
-        const auto * twist_msg = static_cast<const geometry_msgs__msg__Twist *>(msgin);
-        linearVelocity = twist_msg->linear.x;
-        angularVelocity = twist_msg->angular.z;
-        // digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    if (ros_entities == nullptr) {
+        while (1) {
+            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+            delay(5000);
+        }
     }
-};
 
-RosEntities ros_entities;
+    rosidl_runtime_c__String__assign(
+        &(ros_entities->diagnostics_msg.data), 
+        "motor controller running");
 
-#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){error_loop();}}
-#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){}}
+    RCSOFTCHECK(rcl_publish(
+        &(ros_entities->diagnostics_publisher),
+        &(ros_entities->diagnostics_msg),
+        nullptr));
+}
 
 
 // rising edge of the phase A signal (pos/vel) of the 1 motor
@@ -156,52 +142,23 @@ void setup()
 
     // Using Serial as our way to publish ROS2 messages
     Serial.begin(115200);
-
-
-    {
-        // ROS2
-        set_microros_serial_transports(Serial);
-        delay(2000);
-
-        ros_entities.allocator = rcl_get_default_allocator();
-
-        // create init options
-        RCCHECK(rclc_support_init(&(ros_entities.support), 0, NULL, &(ros_entities.allocator)));
-
-        // initialize executor
-        ros_entities.executor = rclc_executor_get_zero_initialized_executor();
-        RCCHECK(rclc_executor_init(
-            &(ros_entities.executor),
-            &(ros_entities.support.context),
-            1, // number of things we can subscribe to
-            &(ros_entities.allocator)
-        ));
-
-        // create node
-        RCCHECK(rclc_node_init_default( &(ros_entities.cmd_vel_node), 
-            "micro_ros_platformio_node", 
-            "",
-            &(ros_entities.support)));
-
-        // create subscriber
-        RCCHECK(rclc_subscription_init_default(&(ros_entities.cmd_vel_subcription), 
-            &(ros_entities.cmd_vel_node), 
-            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-            "/cmd_vel"));
-        RCCHECK(rclc_executor_add_subscription(
-            &(ros_entities.executor),
-            &(ros_entities.cmd_vel_subcription),
-            &(ros_entities.cmd_vel_msg), 
-            &RosEntities::cmd_vel_callback,
-            ON_NEW_DATA
-        ));
-    }
+    
+    // configure microros hardware
+    set_microros_serial_transports(Serial);
+    
+    delay(2000);
+    
     // Serial.println("Testing DC Motor...");
 }
+
+
 
 void loop()
 {
     unsigned long now = micros();
+
+    // Checking microros2 agent loop
+    checkAgentAndSpin(ros_entities); // also reconnects to microros
 
     // Begin motor control loop, run every 20 ms (50 hz)
     if (now - lastControlRead >= 20000) {
@@ -210,8 +167,6 @@ void loop()
         int dutyCycle1 = 0;
         int dutyCycle2 = 0;
         bool pid = true;
-
-        rclc_executor_spin_some(&(ros_entities.executor), 500); // call the cmd_vel callbacks
         
         if (!moving ) {
             motors_stop();
