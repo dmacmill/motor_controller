@@ -49,10 +49,10 @@ volatile bool moving = true;
 volatile bool pressed = false;
 volatile unsigned long lastTimeBtnPressed = 0;
 
-
+// ROS Callbacks
 // Since callbacks have no this pointer, we do this thing
 
-RosEntities * ros_entities = nullptr;
+std::unique_ptr<RosEntities> ros_entities = nullptr;
 
 void cmd_vel_callback(const void * msgin) {
     if (msgin == nullptr) return;
@@ -69,10 +69,11 @@ void diagnostics_callback(rcl_timer_t * timer, int64_t last_call_time) {
     if (ros_entities == nullptr) {
         while (1) {
             digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-            delay(5000);
+            delay(5000); // 5 second / long blink = not able to send diagnostics somehow
         }
     }
 
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     rosidl_runtime_c__String__assign(
         &(ros_entities->diagnostics_msg.data), 
         "motor controller running");
@@ -83,7 +84,7 @@ void diagnostics_callback(rcl_timer_t * timer, int64_t last_call_time) {
         nullptr));
 }
 
-
+// Interrupts
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void IRAM_ATTR HandleEncoderInterrupt1()
 {
@@ -109,6 +110,8 @@ void IRAM_ATTR HandleBtnInterrupt()
     }
     lastTimeBtnPressed = now;
 }
+
+
 
 void setup()
 {

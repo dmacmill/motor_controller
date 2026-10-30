@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include <Arduino.h>
 
 #include <micro_ros_platformio.h>
@@ -17,25 +19,25 @@
 
 
 
-// micro_ros things
+// micro_ros definitions
 #if !defined(MICRO_ROS_TRANSPORT_ARDUINO_SERIAL)
 #error This microcontroller is only avaliable for Arduino framework with serial transport.
 #endif
 
-// Error handle loop
-void error_loop() {
-  while(1) {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); // blink led when ros connect fails
-    delay(100);
-  }
-}
 
-
-#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){error_loop();}}
 #define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){}}
 
-// ROS 2 Entities
+
+
+/////// Callback headers (defined in main.cpp)
+void cmd_vel_callback(const void * msgin);
+void diagnostics_callback(rcl_timer_t * timer, int64_t last_call_time);
+
+
+
+/////// ROS 2 Entities
 struct RosEntities {
+    ~RosEntities();
 
     rcl_subscription_t cmd_vel_subcription;
     geometry_msgs__msg__Twist cmd_vel_msg;
@@ -60,86 +62,16 @@ struct RosEntities {
 };
 
 
-/////// Callback headers (defined in main.cpp)
-void cmd_vel_callback(const void * msgin);
-void diagnostics_callback(rcl_timer_t * timer, int64_t last_call_time);
-
-RosEntities * microros_setup();
-void microros_destroy(RosEntities * ros_entities);
 
 /**
  * Sets up the microros structures, nodes, topics, and other things living in RosEntities.
  * On success returns a RosEntities pointer with all these things
  * On failure enter a busy loop forever, never leaving this function.
  */
-RosEntities * microros_setup() {
-    RosEntities * ros_entities = new RosEntities();
+std::unique_ptr<RosEntities>  microros_setup() {
+    auto  ros_entities =  std::make_unique<RosEntities>();
 
     ros_entities->allocator = rcl_get_default_allocator();
-
-    // // create init options
-    // RCCHECK(rclc_support_init(
-    //     &(ros_entities->support),
-    //     0, 
-    //     NULL,
-    //     &(ros_entities->allocator)
-    // ));
-
-    // // initialize executor
-    // ros_entities->executor = rclc_executor_get_zero_initialized_executor();
-    // RCCHECK(rclc_executor_init(
-    //     &(ros_entities->executor),
-    //     &(ros_entities->support.context),
-    //     2, // number of handles (subscriptions, timers)
-    //     &(ros_entities->allocator)
-    // ));
-
-    // // create node
-    // RCCHECK(rclc_node_init_default(
-    //     &(ros_entities->microros_node), 
-    //     "micro_ros_platformio_node", 
-    //     "",
-    //     &(ros_entities->support))
-    // );
-
-    // // create subscriber
-    // RCCHECK(rclc_subscription_init_default(
-    //     &(ros_entities->cmd_vel_subcription), 
-    //     &(ros_entities->microros_node), 
-    //     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-    //     "/cmd_vel")
-    // );
-    // RCCHECK(rclc_executor_add_subscription(
-    //     &(ros_entities->executor),
-    //     &(ros_entities->cmd_vel_subcription),
-    //     &(ros_entities->cmd_vel_msg), 
-    //     &cmd_vel_callback,
-    //     ON_NEW_DATA
-    // ));
-
-    // // Initialize diagnostics message
-    // std_msgs__msg__String__init(&(ros_entities->diagnostics_msg));
-
-    // // Create diagnostics publisher
-    // RCCHECK(rclc_publisher_init_default(
-    //     &(ros_entities->diagnostics_publisher),
-    //     &(ros_entities->microros_node),
-    //     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
-    //     "/diagnostics"
-    // ));
-
-    // // Create diagnostics timer, add diagnostics_callback
-    // RCSOFTCHECK(rclc_timer_init_default(
-    //     &(ros_entities->diagnostics_timer),
-    //     &(ros_entities->support),
-    //     RCL_MS_TO_NS(1000),
-    //     &diagnostics_callback
-    // ));
-
-    // RCSOFTCHECK(rclc_executor_add_timer(
-    //     &(ros_entities->executor),
-    //     &(ros_entities->diagnostics_timer)
-    // ));
 
 
     // Create init options / support
@@ -149,8 +81,7 @@ RosEntities * microros_setup() {
             NULL,
             &ros_entities->allocator
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
     ros_entities->support_initialized = true;
 
@@ -164,8 +95,7 @@ RosEntities * microros_setup() {
             2,  // subscriptions + timers
             &ros_entities->allocator
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
     ros_entities->executor_initialized = true;
 
@@ -177,8 +107,7 @@ RosEntities * microros_setup() {
             "",
             &ros_entities->support
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
     ros_entities->node_initialized = true;
 
@@ -190,8 +119,7 @@ RosEntities * microros_setup() {
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
             "/cmd_vel"
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
     ros_entities->subscription_initialized = true;
 
@@ -204,15 +132,13 @@ RosEntities * microros_setup() {
             &cmd_vel_callback,
             ON_NEW_DATA
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
 
 
     // Initialize diagnostics message
     if (!std_msgs__msg__String__init(&ros_entities->diagnostics_msg)) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
     ros_entities->diagnostics_msg_initialized = true;
 
@@ -224,8 +150,7 @@ RosEntities * microros_setup() {
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
             "/diagnostics"
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
     ros_entities->publisher_initialized = true;
 
@@ -237,8 +162,7 @@ RosEntities * microros_setup() {
             RCL_MS_TO_NS(1000),
             &diagnostics_callback
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
     ros_entities->timer_initialized = true;
 
@@ -248,8 +172,7 @@ RosEntities * microros_setup() {
             &ros_entities->executor,
             &ros_entities->diagnostics_timer
         ) != RCL_RET_OK) {
-        microros_destroy(ros_entities);
-        return nullptr;
+        ros_entities.reset();
     }
 
     return ros_entities;
@@ -259,43 +182,40 @@ RosEntities * microros_setup() {
 /**
  * Destroys everything in a given RosEntities object correctly
  */
-void microros_destroy(RosEntities * ros_entities) {
-    if (ros_entities == nullptr) return;
+RosEntities::~RosEntities() {
+    if (this == nullptr) return;
 
     // Remove executor and its handles
-    if (ros_entities->executor_initialized)
-        rclc_executor_fini(&ros_entities->executor);
+    if (this->executor_initialized)
+        RCSOFTCHECK(rclc_executor_fini(&this->executor));
 
     // Destroy ROS entities
-    if (ros_entities->timer_initialized)
-        RCCHECK(rcl_timer_fini(&ros_entities->diagnostics_timer));
+    if (this->timer_initialized)
+        RCSOFTCHECK(rcl_timer_fini(&this->diagnostics_timer));
     
-    if (ros_entities->publisher_initialized) {
-        RCCHECK(rcl_publisher_fini(
-            &ros_entities->diagnostics_publisher,
-            &ros_entities->microros_node
+    if (this->publisher_initialized) {
+        RCSOFTCHECK(rcl_publisher_fini(
+            &this->diagnostics_publisher,
+            &this->microros_node
         ));
     }
 
-    if (ros_entities->subscription_initialized) {
-        RCCHECK(rcl_subscription_fini(
-            &ros_entities->cmd_vel_subcription,
-            &ros_entities->microros_node
+    if (this->subscription_initialized) {
+        RCSOFTCHECK(rcl_subscription_fini(
+            &this->cmd_vel_subcription,
+            &this->microros_node
         ));
     }
 
     // Destroy node and support
-    if (ros_entities->node_initialized)
-        RCCHECK(rcl_node_fini(&ros_entities->microros_node));
-    if (ros_entities->support_initialized)
-        rclc_support_fini(&ros_entities->support);
+    if (this->node_initialized)
+        RCSOFTCHECK(rcl_node_fini(&this->microros_node));
+    if (this->support_initialized)
+        RCSOFTCHECK(rclc_support_fini(&this->support));
 
     // Free dynamically allocated message data
-    if (ros_entities->diagnostics_msg_initialized)
-        std_msgs__msg__String__fini(&ros_entities->diagnostics_msg);
-
-    // Free the C++ object
-    delete ros_entities;
+    if (this->diagnostics_msg_initialized)
+        std_msgs__msg__String__fini(&this->diagnostics_msg);
 }
 
 
@@ -307,7 +227,7 @@ bool agentConnected = false;
  * Check agent connection and spin nodes if we are connected
  * 
 */
-void checkAgentAndSpin(RosEntities * ros_entities) {
+void checkAgentAndSpin(std::unique_ptr<RosEntities> & ros_entities) {
     unsigned long now = millis();
 
     if (now - lastAgentCheck >= 1000) {
@@ -317,13 +237,8 @@ void checkAgentAndSpin(RosEntities * ros_entities) {
 
         // destroy and rebuild on connection failure
         if (!agentConnected) {
-            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-            delay(1000);
-            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-            delay(1000);
             if (ros_entities != nullptr) {
-                microros_destroy(ros_entities);
-                ros_entities = nullptr;
+                ros_entities.reset(); // sets to nullptr for next loop
             }
         }
         else if (ros_entities == nullptr) {
