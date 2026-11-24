@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <atomic>
 
 #include "soc/gpio_struct.h"
 
@@ -46,7 +47,7 @@ static double errint2 = 0;
 
 // Interrupt values
 volatile bool moving = true;
-volatile bool pressed = false;
+volatile std::atomic<bool> pressed = false;
 volatile unsigned long lastTimeBtnPressed = 0;
 
 // ROS Callbacks
@@ -74,14 +75,20 @@ void diagnostics_callback(rcl_timer_t * timer, int64_t last_call_time) {
     }
 
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    
     rosidl_runtime_c__String__assign(
-        &(ros_entities->diagnostics_msg.data), 
-        "motor controller running");
+                    &(ros_entities->diagnostics_msg.data), 
+                    ros_entities->diagnostics_ss.str().c_str());
+
 
     RCSOFTCHECK(rcl_publish(
         &(ros_entities->diagnostics_publisher),
         &(ros_entities->diagnostics_msg),
         nullptr));
+
+    ros_entities->diagnostics_ss.str("");
+    ros_entities->diagnostics_ss.clear();
+    
 }
 
 // Interrupts
@@ -102,13 +109,21 @@ void IRAM_ATTR HandleEncoderInterrupt2()
 
 void IRAM_ATTR HandleBtnInterrupt() 
 {
-    unsigned long now = millis();
-    if (now - lastTimeBtnPressed > 100) {
-        // Serial.println("pushed button!!!");
-        moving = !moving;
-        pressed = true;
+    pressed.store(true, std::memory_order_relaxed);
+}
+
+/// @brief check in the main thread if the button was toggled, then perform
+/// button ops.
+void checkButton () {
+    if (pressed.exchange(false, std::memory_order_relaxed)) {
+        uint32_t now = millis();
+        // 100 ms debounce
+        if (now - lastTimeBtnPressed >= 100) {
+            lastTimeBtnPressed = now;
+            moving = !moving;
+            ros_entities->diagnostics_ss << "MOVING SET TO " << (moving?"TRUE\n":"FALSE\n");
+        }
     }
-    lastTimeBtnPressed = now;
 }
 
 
@@ -162,6 +177,8 @@ void loop()
 
     // Checking microros2 agent loop
     checkAgentAndSpin(ros_entities); // also reconnects to microros
+
+    checkButton();
 
     // Begin motor control loop, run every 20 ms (50 hz)
     if (now - lastControlRead >= 20000) {
@@ -221,30 +238,17 @@ void loop()
 
                 // csv format for graphs
                 // target1,actual1,target2,actual2,u1,duty1,u2,duty2
-                
-                // m1/m2 vels
-                // Serial.print("pid: ");
-                // Serial.print(targetVelocity1);
-                // Serial.print(",");
-                // Serial.print(m1.velocity);
-                // Serial.print(",");
 
-                // Serial.print(targetVelocity2);
-                // Serial.print(",");
-                // Serial.print(m2.velocity);
-                // Serial.print(",");
+                ros_entities->diagnostics_ss << "pid: " 
+                << targetVelocity1 << ","
+                << m1.velocity << ","
+                << targetVelocity2 << ','
+                << m2.velocity << ','
+                << u1 << ','
+                << dutyCycle1 << ','
+                << u2 << ','
+                << dutyCycle2 << ",\n";
 
-                // // m1/m2 u vals and duty cycles
-                // Serial.print(u1);
-                // Serial.print(",");
-                // Serial.print(dutyCycle1);            
-                // Serial.print(",");
-            
-                // Serial.print(u2);
-                // Serial.print(",");
-                // Serial.print(dutyCycle2);
-                // Serial.print(",");
-                // Serial.println("");
             }
             else {
                 dutyCycle1 = 100; //m1_vel_to_duty_cycle(linearVelocity);
@@ -259,25 +263,18 @@ void loop()
                 else
                     m2_backward();
 
-                // Serial.print("nopid: ");
-                // Serial.print(linearVelocity);
-                // Serial.print(",");
-                // Serial.print(m1.velocity);
-                // Serial.print(",");
-                // Serial.print(dutyCycle1);
-                // Serial.print(",");
+                // 
+                ros_entities->diagnostics_ss << "nopid: " 
+                << linearVelocity << ","
+                << m1.velocity << ","
+                << dutyCycle1 << ','                
+                << linearVelocity << ','
+                << m2.velocity << ','
+                << dutyCycle2 << ",\n";
 
-                // Serial.print(linearVelocity);
-                // Serial.print(",");
-                // Serial.print(m2.velocity);
-                // Serial.print(",");
-                // Serial.print(dutyCycle2);
-                // Serial.print(",");
-                // Serial.println();
             }
         }
-        
-        
+
         ledcWrite(ENABLE1_PIN, dutyCycle1);
         ledcWrite(ENABLE2_PIN, dutyCycle2);
     }

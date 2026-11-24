@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <sstream>
+
 
 #include <Arduino.h>
 
@@ -50,6 +52,8 @@ struct RosEntities {
     rcl_publisher_t diagnostics_publisher;
     rcl_timer_t diagnostics_timer;
     std_msgs__msg__String diagnostics_msg;
+
+    std::stringstream diagnostics_ss;
 
 
     bool support_initialized = false;
