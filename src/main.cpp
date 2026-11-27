@@ -195,7 +195,7 @@ void loop()
             if (pid) {
                 // PID control Motor 1 (left wheel)
                 double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
-                double err1 = targetVelocity1 - m1.velocity;
+                double err1 = abs(targetVelocity1) - abs(m1.velocity);
 
                 double kp_1 = 300.0;
                 double ki_1 = 150.0; // todo: p is ok, but try higher i
@@ -209,14 +209,14 @@ void loop()
                 // double newTargetVel1 = targetVelocity1 + u1;
                 dutyCycle1 = (int)constrain(u1, 0, 255);
 
-                if (targetVelocity1 > 0.0)
+                if (linearVelocity > 0.0)
                     m1_forward();
                 else
                     m1_backward();
 
                 // PID control Motor 2 (right wheel)
                 double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
-                double err2 = targetVelocity2 - m2.velocity;
+                double err2 = abs(targetVelocity2) - abs(m2.velocity);
 
                 double kp_2 = 300.0;
                 double ki_2 = 150.0;
@@ -230,7 +230,7 @@ void loop()
                 //double newTargetVel2 = targetVelocity2 + u2;
                 dutyCycle2 = (int)constrain(u2, 0, 255);
 
-                if (targetVelocity2 > 0.0)
+                if (linearVelocity > 0.0)
                     m2_forward();
                 else
                     m2_backward();
