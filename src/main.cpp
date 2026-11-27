@@ -1,10 +1,13 @@
 #include <Arduino.h>
+#include <atomic>
+
 #include "soc/gpio_struct.h"
 
 #include "pins.hpp"
 #include "helpers.hpp"
+#include "ros_entities.hpp"
 
-
+static unsigned long lastAgentRead   = 0; // last microros agent check timestamp
 static unsigned long lastControlRead = 0; // last motor control timestamp
 static unsigned long lastEncoderRead = 0; // last encoder read timestamp
 // static unsigned long lastPrint = 0;
@@ -15,31 +18,6 @@ const int pwmChannel = 0;
 const int resolution = 8;
 // static int dutyCycle = 0; // moved to control loop section
 
-/*
-Duty cycles (m1):
-15  => -0.09 or 0.02 probs 0
-20  => 0.023
-50  => 0.111
-60  => 0.14
-80  => 0.205
-100 => 0.265
-120 => 
-
-
-*/
-
-/*
-Duty cycles (m2):0
-15  => 0.0
-20  => 0.021
-50  => 0.110
-60  => 0.14
-80  => 0.201
-100 => 0.265
-120 => 
-
-
-*/
 
 // Encoder state
 struct EncoderSnapshot {
@@ -60,8 +38,8 @@ const double WHEEL_CIRCUMFRENCE = WHEEL_DIAMETER * 3.141592653; // meters
 const double METERS_PER_COUNT = WHEEL_CIRCUMFRENCE / 1080;      // meters / count
 
 // Controller properties
-static double linearVelocity = 0.10;
-static double angularVelocity = 0;
+static volatile double linearVelocity = 0.0;
+static volatile double angularVelocity = 0;
 static double errprev1 = 0;
 static double errint1 = 0;
 static double errprev2 = 0;
@@ -69,9 +47,51 @@ static double errint2 = 0;
 
 // Interrupt values
 volatile bool moving = true;
-volatile bool pressed = false;
+volatile std::atomic<bool> pressed = false;
 volatile unsigned long lastTimeBtnPressed = 0;
 
+// ROS Callbacks
+// Since callbacks have no this pointer, we do this thing
+
+std::unique_ptr<RosEntities> ros_entities = nullptr;
+
+void cmd_vel_callback(const void * msgin) {
+    if (msgin == nullptr) return;
+
+    const auto * twist_msg = static_cast<const geometry_msgs__msg__Twist *>(msgin);
+    linearVelocity = twist_msg->linear.x;
+    angularVelocity = twist_msg->angular.z;
+    // digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+}
+void diagnostics_callback(rcl_timer_t * timer, int64_t last_call_time) {
+    (void)timer;
+    (void)last_call_time;
+
+    if (ros_entities == nullptr) {
+        while (1) {
+            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+            delay(5000); // 5 second / long blink = not able to send diagnostics somehow
+        }
+    }
+
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    
+    rosidl_runtime_c__String__assign(
+                    &(ros_entities->diagnostics_msg.data), 
+                    ros_entities->diagnostics_ss.str().c_str());
+
+
+    RCSOFTCHECK(rcl_publish(
+        &(ros_entities->diagnostics_publisher),
+        &(ros_entities->diagnostics_msg),
+        nullptr));
+
+    ros_entities->diagnostics_ss.str("");
+    ros_entities->diagnostics_ss.clear();
+    
+}
+
+// Interrupts
 // rising edge of the phase A signal (pos/vel) of the 1 motor
 void IRAM_ATTR HandleEncoderInterrupt1()
 {
@@ -89,14 +109,24 @@ void IRAM_ATTR HandleEncoderInterrupt2()
 
 void IRAM_ATTR HandleBtnInterrupt() 
 {
-    unsigned long now = millis();
-    if (now - lastTimeBtnPressed > 100) {
-        Serial.println("pushed button!!!");
-        moving = !moving;
-        pressed = true;
-    }
-    lastTimeBtnPressed = now;
+    pressed.store(true, std::memory_order_relaxed);
 }
+
+/// @brief check in the main thread if the button was toggled, then perform
+/// button ops.
+void checkButton () {
+    if (pressed.exchange(false, std::memory_order_relaxed)) {
+        uint32_t now = millis();
+        // 100 ms debounce
+        if (now - lastTimeBtnPressed >= 100) {
+            lastTimeBtnPressed = now;
+            moving = !moving;
+            ros_entities->diagnostics_ss << "MOVING SET TO " << (moving?"TRUE\n":"FALSE\n");
+        }
+    }
+}
+
+
 
 void setup()
 {
@@ -113,6 +143,7 @@ void setup()
     pinMode(ENCPULSEB2_PIN, INPUT_PULLUP);
     pinMode(BTN_PIN, INPUT_PULLUP);
     pinMode(POTEN_PIN, INPUT);
+    pinMode(LED_BUILTIN, OUTPUT);
 
     // Attach intterupts to pullup resistor pins
     attachInterrupt(digitalPinToInterrupt(ENCPULSEA1_PIN), HandleEncoderInterrupt1, RISING);
@@ -126,22 +157,28 @@ void setup()
     ledcAttachChannel(ENABLE1_PIN, freq, resolution, pwmChannel);
     ledcAttachChannel(ENABLE2_PIN, freq, resolution, pwmChannel);
 
-    // Begin at 115200 baud
-    Serial.begin(115200);
-    delay(2000);
-    Serial.println("Testing DC Motor...");
 
-    // Enter the target velocities
-    // Serial.println("Enter the desired linear velocity (m/s): ");
-    // char buf[10];
-    // int end = Serial.readBytesUntil('\n', buf, 10);
-    // buf[end] = '\0';
-    // linearVelocity = atoi(buf);
+    // Using Serial as our way to publish ROS2 messages
+    Serial.begin(115200);
+    
+    // configure microros hardware
+    set_microros_serial_transports(Serial);
+    
+    delay(2000);
+    
+    // Serial.println("Testing DC Motor...");
 }
+
+
 
 void loop()
 {
     unsigned long now = micros();
+
+    // Checking microros2 agent loop
+    checkAgentAndSpin(ros_entities); // also reconnects to microros
+
+    checkButton();
 
     // Begin motor control loop, run every 20 ms (50 hz)
     if (now - lastControlRead >= 20000) {
@@ -150,7 +187,6 @@ void loop()
         int dutyCycle1 = 0;
         int dutyCycle2 = 0;
         bool pid = true;
-
         
         if (!moving ) {
             motors_stop();
@@ -159,7 +195,7 @@ void loop()
             if (pid) {
                 // PID control Motor 1 (left wheel)
                 double targetVelocity1 = linearVelocity; // todo: change this to use inv. kinematics 
-                double err1 = targetVelocity1 - m1.velocity;
+                double err1 = abs(targetVelocity1) - abs(m1.velocity);
 
                 double kp_1 = 300.0;
                 double ki_1 = 150.0; // todo: p is ok, but try higher i
@@ -173,14 +209,14 @@ void loop()
                 // double newTargetVel1 = targetVelocity1 + u1;
                 dutyCycle1 = (int)constrain(u1, 0, 255);
 
-                if (targetVelocity1 > 0.0)
+                if (linearVelocity > 0.0)
                     m1_forward();
                 else
                     m1_backward();
 
                 // PID control Motor 2 (right wheel)
                 double targetVelocity2 = linearVelocity; // todo: change this to use inv. kinematics
-                double err2 = targetVelocity2 - m2.velocity;
+                double err2 = abs(targetVelocity2) - abs(m2.velocity);
 
                 double kp_2 = 300.0;
                 double ki_2 = 150.0;
@@ -194,7 +230,7 @@ void loop()
                 //double newTargetVel2 = targetVelocity2 + u2;
                 dutyCycle2 = (int)constrain(u2, 0, 255);
 
-                if (targetVelocity2 > 0.0)
+                if (linearVelocity > 0.0)
                     m2_forward();
                 else
                     m2_backward();
@@ -202,30 +238,17 @@ void loop()
 
                 // csv format for graphs
                 // target1,actual1,target2,actual2,u1,duty1,u2,duty2
-                
-                // m1/m2 vels
-                Serial.print("pid: ");
-                Serial.print(targetVelocity1);
-                Serial.print(",");
-                Serial.print(m1.velocity);
-                Serial.print(",");
 
-                Serial.print(targetVelocity2);
-                Serial.print(",");
-                Serial.print(m2.velocity);
-                Serial.print(",");
+                ros_entities->diagnostics_ss << "pid: " 
+                << targetVelocity1 << ","
+                << m1.velocity << ","
+                << targetVelocity2 << ','
+                << m2.velocity << ','
+                << u1 << ','
+                << dutyCycle1 << ','
+                << u2 << ','
+                << dutyCycle2 << ",\n";
 
-                // m1/m2 u vals and duty cycles
-                Serial.print(u1);
-                Serial.print(",");
-                Serial.print(dutyCycle1);            
-                Serial.print(",");
-            
-                Serial.print(u2);
-                Serial.print(",");
-                Serial.print(dutyCycle2);
-                Serial.print(",");
-                Serial.println("");
             }
             else {
                 dutyCycle1 = 100; //m1_vel_to_duty_cycle(linearVelocity);
@@ -240,25 +263,18 @@ void loop()
                 else
                     m2_backward();
 
-                Serial.print("nopid: ");
-                Serial.print(linearVelocity);
-                Serial.print(",");
-                Serial.print(m1.velocity);
-                Serial.print(",");
-                Serial.print(dutyCycle1);
-                Serial.print(",");
+                // 
+                ros_entities->diagnostics_ss << "nopid: " 
+                << linearVelocity << ","
+                << m1.velocity << ","
+                << dutyCycle1 << ','                
+                << linearVelocity << ','
+                << m2.velocity << ','
+                << dutyCycle2 << ",\n";
 
-                Serial.print(linearVelocity);
-                Serial.print(",");
-                Serial.print(m2.velocity);
-                Serial.print(",");
-                Serial.print(dutyCycle2);
-                Serial.print(",");
-                Serial.println();
             }
         }
-        
-        
+
         ledcWrite(ENABLE1_PIN, dutyCycle1);
         ledcWrite(ENABLE2_PIN, dutyCycle2);
     }
